@@ -1,0 +1,14 @@
+{
+  "api_id": 0,
+  "api_hash": "",
+  "chat": "Box",
+  "port": 8750,
+  "max_file_mb": 50,
+  "backup": {
+    "enabled": true,
+    "remote": "gdrive",
+    "folder": "Box-Backup",
+    "interval_hours": 24,
+    "keep_snapshots": 14
+  }
+}

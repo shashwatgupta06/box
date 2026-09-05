@@ -1,0 +1,9 @@
+# Box — runtime dependencies (Python 3.11+)
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+Telethon==1.44.0
+aiohttp==3.14.3
+beautifulsoup4==4.15.0
+
+# Optional: Google Drive backups need the `rclone` binary on PATH
+# (https://rclone.org/install/) — not a Python package.

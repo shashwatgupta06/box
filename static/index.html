@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Box</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📦</text></svg>">
+</head>
+<body>
+<div class="frame">
+  <aside class="sidebar">
+    <div class="logo"><span class="logo-dots">: :</span> Box</div>
+    <nav class="views">
+      <button class="view-btn active" data-view="all">
+        <svg viewBox="0 0 24 24"><path d="M7 7h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z"/><path d="M9 7V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-1"/></svg>
+        All</button>
+      <button class="view-btn" data-view="unsorted">
+        <svg viewBox="0 0 24 24"><path d="M4 5h16l-6 7v5l-4 2v-7L4 5Z"/></svg>
+        Unsorted</button>
+      <button class="view-btn" data-view="trash">
+        <svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2m-7 0 1 12h8l1-12"/></svg>
+        Trash</button>
+    </nav>
+    <div class="collections-label">Collections</div>
+    <ul class="collections" id="collectionList"></ul>
+    <button class="new-collection" id="newCollectionBtn"><span>+</span> New collection</button>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <button class="theme-toggle" id="themeToggle" title="Toggle theme">
+        <span class="knob"><svg viewBox="0 0 24 24"><path d="M21 12.8A8.5 8.5 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg></span>
+      </button>
+      <div class="top-right">
+        <span class="sync-pill" id="backupPill" title="Click to back up now" style="cursor:pointer"><span class="dot"></span><span id="backupText">backup</span></span>
+        <span class="sync-pill" id="syncPill"><span class="dot"></span><span id="syncText">starting…</span></span>
+      </div>
+    </header>
+
+    <div class="filterbar">
+      <button class="icon-btn" id="searchBtn" title="Search">
+        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      </button>
+      <input type="text" id="searchInput" class="search-input" placeholder="Search Box…">
+      <nav class="tabs" id="kindTabs">
+        <button class="tab active" data-kind="">All</button>
+        <button class="tab" data-kind="article">Article</button>
+        <button class="tab" data-kind="video">Video</button>
+        <button class="tab" data-kind="image">Image</button>
+        <button class="tab" data-kind="file">Files</button>
+        <button class="tab" data-kind="note">Notes</button>
+      </nav>
+      <div class="filter-right">
+        <button class="icon-btn layout-btn active" id="gridBtn" title="Grid view">
+          <svg viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg>
+        </button>
+        <button class="icon-btn layout-btn" id="listBtn" title="List view">
+          <svg viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="5" cy="6" r="1.2" fill="currentColor" stroke="none"/><circle cx="5" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="5" cy="18" r="1.2" fill="currentColor" stroke="none"/></svg>
+        </button>
+        <button class="add-btn" id="addBtn" title="Add a link">+</button>
+      </div>
+    </div>
+
+    <section class="content" id="content"></section>
+  </main>
+</div>
+
+<dialog id="dlgCollection" class="dlg">
+  <form method="dialog">
+    <h2>New collection</h2>
+    <label>Name<input type="text" id="colName" required placeholder="e.g. To-Buy"></label>
+    <label>Inside<select id="colParent"></select></label>
+    <div class="dlg-actions">
+      <button value="cancel" class="ghost">Cancel</button>
+      <button value="ok" class="primary" id="colCreate">Create</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="dlgAdd" class="dlg">
+  <form method="dialog">
+    <h2>Add a link</h2>
+    <label>URL<input type="url" id="addUrl" required placeholder="https://…"></label>
+    <label>Collection<select id="addParent"></select></label>
+    <div class="dlg-actions">
+      <button value="cancel" class="ghost">Cancel</button>
+      <button value="ok" class="primary" id="addCreate">Save to Box</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="dlgMove" class="dlg">
+  <h2>Move to collection</h2>
+  <div class="move-list" id="moveList"></div>
+  <div class="dlg-actions"><button class="ghost" id="moveCancel">Cancel</button></div>
+</dialog>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

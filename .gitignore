@@ -1,0 +1,20 @@
+# Local environment
+.venv/
+__pycache__/
+*.py[cod]
+
+# Local state: database, downloaded media, backups
+data/
+
+# Telegram login session — grants access to your account, never commit
+*.session
+*.session-journal
+
+# Local settings (copy config.example.json to config.json)
+config.json
+
+# Editor / OS / tooling
+.claude/
+.idea/
+.vscode/
+.DS_Store
