@@ -17,18 +17,18 @@ backups are connected.</sub>
 
 1. On your phone, share any post / article / video / photo / file to your
    **Box** chat on Telegram.
-2. Name the destination in a short message — either as the **comment** in Telegram's share sheet
-   (Telegram sends it just before the shared item) or as the **next message** after it:
+2. Name the destination with a label:
 
    ```
    Career.Computer Vision.
    ```
 
    That's `Collection.Subcategory` (the subcategory is optional; `To-Buy // Kitchen` works too).
-   Collections and subcategories are created automatically if they don't exist yet.
-   Add a title in parentheses to name the card yourself — `Career.New.(Kitchen appliance)` — or
-   send just `(Kitchen appliance)` to set the title only.
-   You can also **reply** to any earlier shared message with a collection name.
+   Collections and subcategories are created automatically if they don't exist yet. Put the label
+   **in the same message** as the link, as the **comment** in Telegram's share sheet, or as the
+   **next message** after the link. Add a title in parentheses to name the card yourself —
+   `Career.New.(Kitchen appliance)` — or send just `(Kitchen appliance)` to set the title only.
+   You can also **reply** to any earlier shared message with a label.
 3. If you don't send a collection message, the item lands in **Unsorted** and
    you can move it from the web UI later.
 

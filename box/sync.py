@@ -2,8 +2,9 @@
 
 Message convention:
   1. Share anything (link / post / photo / file) into the Box chat.
-  2. Name the destination in a short message: "Career.Computer Vision." or "To-Buy // Kitchen"
-     (collection, then an optional subcategory; both are created if missing). The label may be
+  2. Name the destination: "Career.Computer Vision." or "To-Buy // Kitchen" (collection, then an optional
+     subcategory; both are created if missing; "(Title)" at the end names the card). The label may be
+     - in the same message as the link or photo (a line of its own, or text around the link),
      - a comment typed in the share sheet, which Telegram sends just BEFORE the shared item, or
      - the next message after the item.
   Replying to an earlier shared message with a collection name also works.
@@ -28,7 +29,10 @@ URL_RE = re.compile(r"https?://\S+")
 # title in parentheses: "Career.New.(Kitchen appliance)". A title alone, "(Kitchen appliance)", also works.
 SPEC_RE = re.compile(r"^\s*(?:([^./\n()]{1,48}?)\s*(?:(?://+|\.)\s*([^./\n()]{1,48}?)\s*)?\.?)?\s*"
                      r"(?:\(\s*([^()\n]{1,150}?)\s*\)\s*\.?)?\s*$")
-LABEL_BEFORE_SECONDS = 15   # a label sent this close before an item is that item's share-sheet comment
+# A share-sheet comment reaches the chat in the same second as its item, just before it; a label typed after an
+# item comes later. So a label is attached to the FOLLOWING item only when that item arrives this close after it;
+# otherwise it belongs to the item before it.
+LABEL_BEFORE_SECONDS = 1
 LOGIN_COMMANDS = {"login", "/login", "log in", "sign in"}
 LOGIN_REPLY_MARK = "🔑 Box sign-in"   # Box's own replies start with this; never saved as items
 LOGIN_PAIR_RE = re.compile(r"^(?:/?login|log in|sign in)\s+([A-Za-z0-9][A-Za-z0-9 -]{3,14})$", re.I)
@@ -192,6 +196,10 @@ class SyncEngine:
                 fields["file_name"] = fname
 
         fields["kind"] = kind
+        inline, text_rest = _inline_label(text)
+        if inline:
+            fields["text"] = text_rest or None
+            text = text_rest
         if text and not url:
             fields["title"] = text[:120]
         elif fields.get("file_name") and not url:
@@ -200,6 +208,8 @@ class SyncEngine:
         label = self.pending_labels.pop(msg.id, None)
         if label:
             _apply_label(item_id, label)
+        if inline:      # a label inside the message itself wins over a share-sheet comment
+            _apply_label(item_id, inline)
         if url:
             # fetch link preview in the background; don't block the sync loop
             asyncio.create_task(self._enrich(item_id, msg, url))
@@ -319,6 +329,29 @@ class SyncEngine:
             if nxt is not None:
                 return nxt
         return None
+
+
+def _inline_label(text):
+    """A label written in the same message as a link or photo -> (spec, text without it), else (None, text).
+
+    Only lines that look like a label count: the dotted or // form, or a (title) — e.g. "Career.AI." or
+    "To-Buy // Kitchen (Blender)". Plain words never do, so an article title shared along with its link is not
+    mistaken for a collection, and a lone "Name." counts only if that collection exists."""
+    if not text:
+        return None, text
+    lines = (text or "").splitlines()
+    for i, line in enumerate(lines):
+        bare = URL_RE.sub(" ", line).strip()
+        if not bare or len(bare) > 120:
+            continue
+        m = SPEC_RE.match(bare)
+        if m and (m.group(1) or m.group(3)) and ("." in bare or "//" in bare or "(" in bare):
+            if not m.group(2) and not m.group(3) and not db.find_collection_by_name(m.group(1)):
+                continue    # "Great read." next to a link: only an existing collection's name counts alone
+            rest_line = line.replace(bare, "", 1).strip() if bare in line else URL_RE.findall(line) and " ".join(URL_RE.findall(line))
+            rest = lines[:i] + ([rest_line] if rest_line else []) + lines[i + 1:]
+            return m.groups(), "\n".join(rest).strip()
+    return None, text
 
 
 def _apply_label(item_id, spec):
