@@ -21,6 +21,10 @@ const state = {
   items: [],
   expanded: new Set(JSON.parse(store.get("box.expanded", "[]"))),
   loaded: false,
+  latestId: null,       // newest save id the page has seen
+  fresh: new Set(),     // ids of saves that just arrived (highlighted)
+  ownAdds: new Set(),   // ids saved from this page's Add dialog: no notification for those
+  unseen: 0,            // new saves while the tab was hidden (shown in the title)
 };
 
 /* ---------- icons ---------- */
@@ -199,12 +203,17 @@ const jsonBody = (method, obj) => ({
 
 /* ---------- helpers ---------- */
 let toastTimer;
-function toast(msg) {
+function toast(msg, { image = null, sub = "", action = null, onAction = null, ms = 2200 } = {}) {
   const t = $("#toast");
-  t.textContent = msg;
+  t.classList.toggle("rich", !!(image || sub || action));
+  t.innerHTML =
+    (image ? `<span class="toast-img" style="background-image:url('${esc(image)}')"></span>` : "") +
+    `<span class="toast-text"><span class="toast-msg">${esc(msg)}</span>${sub ? `<span class="toast-sub">${esc(sub)}</span>` : ""}</span>` +
+    (action ? `<button class="toast-act">${esc(action)}</button>` : "");
+  t.querySelector(".toast-act")?.addEventListener("click", () => { t.classList.remove("show"); onAction?.(); });
   t.classList.add("show");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove("show"), 2200);
+  toastTimer = setTimeout(() => t.classList.remove("show"), ms);
 }
 
 function hostOf(url) {
@@ -278,7 +287,48 @@ async function loadState() {
   renderDrawer();
   renderHero();
   if (state.loaded) renderShelf();   // the items may have arrived before the collections
+  const latest = s.latest || 0;
+  if (state.latestId === null) state.latestId = latest;
+  else if (latest > state.latestId) {
+    const since = state.latestId;
+    state.latestId = latest;
+    announceNewSaves(since);
+  }
 }
+
+/* ---------- new-save notifications ---------- */
+async function announceNewSaves(sinceId) {
+  let recent = [];
+  try { recent = await api("/api/items?view=all"); } catch (e) { return; }
+  const added = recent.filter((it) => it.id > sinceId && !state.ownAdds.has(it.id));
+  if (!added.length) return;
+  added.forEach((it) => state.fresh.add(it.id));
+  setTimeout(() => { added.forEach((it) => state.fresh.delete(it.id)); $$(".tile.fresh").forEach((el) => el.classList.remove("fresh")); }, 9000);
+  if (document.hidden) {
+    state.unseen += added.length;
+    document.title = `(${state.unseen}) ${document.title.replace(/^\(\d+\) /, "")}`;
+  }
+  const first = added[0];
+  const label = (it) => it.title || (it.kind === "note" ? (it.text || "").slice(0, 60) : "") || it.site_name || hostOf(it.url) || "New save";
+  const where = (it) => it.collection_path ? `in ${it.collection_path}` : "in Unsorted";
+  if (added.length === 1) {
+    toast("New save", { image: first.image ? mediaUrl(first.image) : null, sub: `${label(first)} · ${where(first)}`,
+                        action: "View", onAction: () => openItem(first), ms: 7000 });
+  } else {
+    toast(`${added.length} new saves`, { image: first.image ? mediaUrl(first.image) : null,
+                                         sub: added.slice(0, 2).map(label).join(", ") + (added.length > 2 ? "…" : ""),
+                                         action: "View", onAction: () => go({ view: "all", collectionId: null }), ms: 7000 });
+  }
+  loadItems();
+  // Link previews (title, picture) usually land a few seconds after the message: refresh once more.
+  setTimeout(() => { if (!signedOut) loadItems(); }, 8000);
+}
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && state.unseen) {
+    state.unseen = 0;
+    document.title = document.title.replace(/^\(\d+\) /, "");
+  }
+});
 
 let itemsReq = 0;
 async function loadItems() {
@@ -503,7 +553,7 @@ function emptyState() {
 
 function tile(it) {
   const el = document.createElement("article");
-  el.className = "tile" + (it.trashed ? " trashed" : "");
+  el.className = "tile" + (it.trashed ? " trashed" : "") + (state.fresh.has(it.id) ? " fresh" : "");
   el.tabIndex = 0;
   const host = it.url ? hostOf(it.url) : "";
   const site = it.site_name || host;
@@ -638,8 +688,9 @@ $("#dlgAdd").addEventListener("close", async () => {
   const url = $("#addUrl").value.trim();
   if (!url) return;
   toast("Saving…");
-  await api("/api/items", jsonBody("POST", {
+  const saved = await api("/api/items", jsonBody("POST", {
     url, collection_id: $("#addParent").value ? +$("#addParent").value : null }));
+  if (saved?.id) state.ownAdds.add(saved.id);
   toast("Saved");
   refresh();
 });
@@ -874,7 +925,11 @@ window.addEventListener("resize", () => {
     renderHero();
     refresh();
   });
-  setInterval(() => { if (!document.hidden && !signedOut) loadState(); }, 20000);   // status dot + counts
+  const pollState = () => {
+    if (!signedOut) loadState().catch(() => {});
+    setTimeout(pollState, document.hidden ? 30000 : 10000);   // new saves, status dot, counts
+  };
+  setTimeout(pollState, 10000);
   setInterval(() => { if (!document.hidden && !signedOut && !document.querySelector("dialog[open]")) loadItems(); }, 30000);
   document.addEventListener("visibilitychange", () => { if (!document.hidden && !signedOut) refresh(); });
 })();

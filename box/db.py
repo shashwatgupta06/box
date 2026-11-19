@@ -192,6 +192,12 @@ def delete_item(item_id):
     q("DELETE FROM items WHERE id=?", (item_id,))
 
 
+def latest_item_id():
+    """Highest item id: lets clients notice new saves with a cheap poll."""
+    row = q("SELECT MAX(id) AS m FROM items").fetchone()
+    return row["m"] or 0
+
+
 def counts():
     row = q("""SELECT
         SUM(CASE WHEN trashed=0 THEN 1 ELSE 0 END) AS all_n,
