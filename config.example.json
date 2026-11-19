@@ -4,6 +4,8 @@
   "chat": "Box",
   "port": 8750,
   "max_file_mb": 50,
+  "access_token": "",
+  "cors_origins": [],
   "backup": {
     "enabled": true,
     "remote": "gdrive",

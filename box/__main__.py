@@ -16,10 +16,13 @@ def main():
         import uvicorn
         from .config import load_config
         cfg = load_config()
-        print(f"Box running at http://localhost:{cfg['port']}")
-        uvicorn.run("box.server:app", host="127.0.0.1", port=cfg["port"], log_level="warning")
+        print(f"Box running at http://{cfg['host']}:{cfg['port']}")
+        uvicorn.run("box.server:app", host=cfg["host"], port=cfg["port"], log_level="warning")
+    elif cmd == "token":
+        import secrets
+        print(secrets.token_urlsafe(32))
     else:
-        print("usage: python -m box [run|login|demo|backup]")
+        print("usage: python -m box [run|login|demo|backup|token]")
         sys.exit(1)
 
 

@@ -10,8 +10,11 @@ DEFAULTS = {
     "api_id": 0,
     "api_hash": "",
     "chat": "Box",          # chat/channel title to watch, or "me" for Saved Messages
+    "host": "127.0.0.1",    # interface to listen on; keep 127.0.0.1 behind a reverse proxy
     "port": 8750,
     "max_file_mb": 50,      # skip downloading shared files bigger than this
+    "access_token": "",     # when set, /api and /media require it (needed once Box is reachable remotely)
+    "cors_origins": [],     # web origins allowed to call the API, e.g. ["https://<user>.github.io"]
 }
 
 

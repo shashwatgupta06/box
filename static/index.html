@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Box</title>
-<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="static/style.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📦</text></svg>">
 </head>
 <body>
@@ -96,6 +96,21 @@
   <div class="dlg-actions"><button class="ghost" id="moveCancel">Cancel</button></div>
 </dialog>
 
-<script src="/static/app.js"></script>
+<dialog id="dlgConnect" class="dlg">
+  <form method="dialog">
+    <h2>Connect to your Box</h2>
+    <p class="dlg-note">This page is only the interface. Your items live on your own Box server — enter its
+      address and the access token from its <code>config.json</code>. Both are kept in this browser only.</p>
+    <p class="dlg-error" id="connectError"></p>
+    <label>Server address<input type="url" id="connServer" required placeholder="https://box.example.com"></label>
+    <label>Access token<input type="password" id="connToken" autocomplete="off" placeholder="access_token"></label>
+    <div class="dlg-actions">
+      <button value="forget" class="ghost" id="connForget" formnovalidate>Forget</button>
+      <button value="ok" class="primary">Connect</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="static/app.js"></script>
 </body>
 </html>

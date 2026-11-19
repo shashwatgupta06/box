@@ -4,7 +4,7 @@
 your own computer, syncs those messages — even ones sent while the computer was
 off — and organizes them into collections with a visual card UI.
 
-[![CI](https://github.com/calmcodelabs/box/actions/workflows/ci.yml/badge.svg)](https://github.com/calmcodelabs/box/actions/workflows/ci.yml)
+[![CI](https://github.com/shashwatgupta06/box/actions/workflows/ci.yml/badge.svg)](https://github.com/shashwatgupta06/box/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776ab.svg)](https://www.python.org/downloads/)
 
@@ -43,7 +43,7 @@ optional backup to your own Google Drive.
 **1. Install** (Python 3.11 or newer):
 
 ```bash
-git clone https://github.com/calmcodelabs/box.git
+git clone https://github.com/shashwatgupta06/box.git
 cd box
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
@@ -84,6 +84,32 @@ Seed sample data to explore the UI first:
 ```
 
 (Reset later with `rm data/box.db data/media/demo_*.svg`.)
+
+## Use it from anywhere: UI on GitHub Pages, server on a small VM
+
+The web UI is plain static files, so it is also published to GitHub Pages
+(<https://shashwatgupta06.github.io/box/>) by `.github/workflows/pages.yml` on every push to `main`
+that touches `static/`. The Pages copy holds no data: on first visit it asks for the address of *your*
+Box server and its access token, and keeps both in that browser only.
+
+To run the server somewhere always on (any small Linux VM with a public IP; an `e2-micro` on Google
+Cloud's free tier is enough):
+
+```bash
+# on the server
+git clone https://github.com/shashwatgupta06/box.git && cd box
+bash deploy/setup-server.sh <ip-with-dashes>.sslip.io https://<user>.github.io
+```
+
+`setup-server.sh` installs [Caddy](https://caddyserver.com/) for automatic HTTPS, runs Box as a
+systemd service on `127.0.0.1:8750` behind it, and writes a `config.json` with a fresh
+`access_token` and the Pages origin in `cors_origins`. Open ports 80 and 443 to the server, add your
+Telegram `api_id` / `api_hash` to `config.json`, run `.venv/bin/python -m box login` once, and
+`sudo systemctl restart box`. Later updates: `bash deploy/update-server.sh` on the server.
+
+With `access_token` set, every `/api` and `/media` request must carry it (as a Bearer header, or
+`?token=` for images and file links); generate one with `python -m box token`. Leave it empty only
+when Box listens on `127.0.0.1` for your own machine.
 
 ## Daily Google Drive backup
 
@@ -128,7 +154,7 @@ again (the Telegram session is intentionally never uploaded) and start Box.
 
 ```
 box/
-  __main__.py    CLI entry point — run | login | demo | backup
+  __main__.py    CLI entry point — run | login | demo | backup | token
   server.py      FastAPI app and JSON API
   sync.py        Telegram client: history catch-up + live updates
   metadata.py    link previews (title, source, cover image)
@@ -137,14 +163,16 @@ box/
   login.py       one-time Telegram sign-in
   config.py      config loading and defaults
   demo.py        sample data seeder
-static/          single-page UI — plain HTML/CSS/JS, no build step
+static/          single-page UI — plain HTML/CSS/JS, no build step (also published to GitHub Pages)
+deploy/          server setup and update scripts (Caddy + systemd)
 data/            local state: database, media, backups (never committed)
 ```
 
 ## Notes
 
-- `config.json` options: `chat` (chat title or `"me"`), `port`,
-  `max_file_mb` (largest shared file to download), and the `backup` block.
+- `config.json` options: `chat` (chat title or `"me"`), `host` and `port`,
+  `max_file_mb` (largest shared file to download), `access_token`, `cors_origins`, and the
+  `backup` block.
   It's gitignored — `config.example.json` is the template.
 - Trash keeps items until you delete them permanently from the Trash view.
 - Never share `data/box_session.session` — it grants access to your Telegram

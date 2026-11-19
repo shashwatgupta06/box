@@ -1,10 +1,12 @@
 import asyncio
 import logging
+import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -44,6 +46,30 @@ async def lifespan(app):
 
 app = FastAPI(title="Box", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
+
+_cfg = load_config()
+_TOKEN = _cfg.get("access_token") or ""
+
+
+@app.middleware("http")
+async def require_token(request: Request, call_next):
+    """With an access_token configured, /api and /media need it: as a Bearer header, or as ?token= for
+    plain links such as <img src>. The UI shell itself stays public; it holds no data."""
+    path = request.url.path
+    if _TOKEN and request.method != "OPTIONS" and path.startswith(("/api/", "/media/")):
+        header = request.headers.get("authorization", "")
+        given = header[7:] if header.lower().startswith("bearer ") else request.query_params.get("token", "")
+        if not secrets.compare_digest(given.encode(), _TOKEN.encode()):
+            return JSONResponse({"detail": "unauthorized"}, status_code=401)
+    return await call_next(request)
+
+
+# Added after the auth middleware so it runs first: preflight requests are answered here, and 401s still carry
+# the CORS headers the browser needs to read them.
+if _cfg.get("cors_origins"):
+    app.add_middleware(CORSMiddleware, allow_origins=_cfg["cors_origins"], allow_credentials=False,
+                       allow_methods=["GET", "POST", "PATCH", "DELETE"],
+                       allow_headers=["Authorization", "Content-Type"])
 
 
 @app.get("/")

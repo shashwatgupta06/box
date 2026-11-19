@@ -254,6 +254,10 @@ html[data-theme="light"] .theme-toggle svg { fill: #6b5210; }
   border: 1px solid var(--line); border-radius: 10px;
   padding: 10px 12px; font: inherit; font-size: 14px;
 }
+.dlg-note { font-size: 13px; color: var(--muted); line-height: 1.5; margin: -8px 0 14px; max-width: 380px; }
+.dlg-note code { font-size: 12px; }
+.dlg-error { font-size: 13px; color: #e5484d; margin: 0 0 12px; }
+.dlg-error:empty { display: none; }
 .dlg-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 6px; }
 .dlg button { font: inherit; font-size: 14px; border-radius: 10px; padding: 9px 16px; cursor: pointer; border: 0; }
 .dlg .ghost { background: none; color: var(--muted); }

@@ -28,8 +28,63 @@ const ACT = {
   del: '<svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg>',
 };
 
-async function api(path, opts) {
-  const r = await fetch(path, opts);
+/* ---------- server connection ----------
+ * Served by the Box server itself (python -m box run), the UI talks to its own origin.
+ * Served as a static site (e.g. GitHub Pages), it talks to the server saved in this browser. */
+const STATIC_HOST = location.hostname.endsWith("github.io") || location.protocol === "file:";
+const conn = {
+  get server() { return (localStorage.getItem("box.server") || "").replace(/\/+$/, ""); },
+  get token() { return localStorage.getItem("box.token") || ""; },
+};
+const base = () => (STATIC_HOST ? conn.server : "");
+
+// Server-relative media links (/media/…) need the server address and, for <img>/links, the token in the URL.
+function mediaUrl(u) {
+  if (!u || !u.startsWith("/media/")) return u;
+  const t = conn.token ? `?token=${encodeURIComponent(conn.token)}` : "";
+  return base() + u + t;
+}
+
+let connectOpen = false;
+function openConnect(message) {
+  if (connectOpen) return;
+  connectOpen = true;
+  $("#connServer").value = conn.server;
+  $("#connToken").value = conn.token;
+  $("#connectError").textContent = message || "";
+  $("#dlgConnect").showModal();
+}
+$("#dlgConnect").addEventListener("close", () => {
+  connectOpen = false;
+  const v = $("#dlgConnect").returnValue;
+  if (v === "forget") {
+    localStorage.removeItem("box.server");
+    localStorage.removeItem("box.token");
+  } else if (v === "ok") {
+    localStorage.setItem("box.server", $("#connServer").value.trim());
+    localStorage.setItem("box.token", $("#connToken").value.trim());
+  } else return;
+  refresh();
+});
+
+async function api(path, opts = {}) {
+  if (STATIC_HOST && !conn.server) {
+    openConnect();
+    throw new Error("not connected");
+  }
+  const headers = { ...(opts.headers || {}) };
+  if (conn.token) headers.Authorization = `Bearer ${conn.token}`;
+  let r;
+  try {
+    r = await fetch(base() + path, { ...opts, headers });
+  } catch (e) {
+    if (STATIC_HOST) openConnect(`Could not reach ${conn.server}.`);
+    throw e;
+  }
+  if (r.status === 401) {
+    openConnect("The server refused the access token.");
+    throw new Error("unauthorized");
+  }
   if (!r.ok) throw new Error(await r.text());
   return r.json();
 }
@@ -56,6 +111,12 @@ function renderSyncPill(status) {
     unconfigured: "Telegram not set up",
   };
   $("#syncText").textContent = labels[status.state] || status.state;
+}
+
+// On a static host the sync pill doubles as the way back to the connection settings.
+if (STATIC_HOST) {
+  $("#syncPill").style.cursor = "pointer";
+  $("#syncPill").addEventListener("click", () => openConnect());
 }
 
 function renderBackupPill(b) {
@@ -194,7 +255,7 @@ function card(it) {
     bodyInner = `<h3>${esc(title)}</h3><span class="src">${esc(src)}${colpath}</span>`;
   }
   el.innerHTML =
-    (it.image ? `<img class="cover" src="${esc(it.image)}" loading="lazy" alt="">` : "") +
+    (it.image ? `<img class="cover" src="${esc(mediaUrl(it.image))}" loading="lazy" alt="">` : "") +
     `<div class="scrim"></div>` +
     `<div class="body">${bodyInner}</div>` +
     `<div class="type-chip">${ICONS[it.kind] || ICONS.article}</div>` +
@@ -223,13 +284,13 @@ function card(it) {
     });
   } else {
     if (it.url) btn(ACT.open, "Open link", "", () => window.open(it.url, "_blank"));
-    else if (it.file) btn(ACT.open, "Open file", "", () => window.open(it.file, "_blank"));
+    else if (it.file) btn(ACT.open, "Open file", "", () => window.open(mediaUrl(it.file), "_blank"));
     btn(ACT.move, "Move to collection", "", () => openMove(it));
     btn(ACT.trash, "Move to trash", "danger", async () => {
       await api(`/api/items/${it.id}`, patchBody({ trashed: true })); refresh();
     });
   }
-  const target = it.url || it.file;
+  const target = it.url || mediaUrl(it.file);
   if (target) {
     el.style.cursor = "pointer";
     el.addEventListener("click", () => window.open(target, "_blank"));
