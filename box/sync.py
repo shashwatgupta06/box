@@ -43,13 +43,15 @@ class SyncEngine:
                     state="error",
                     detail="Not logged in to Telegram. Run: .venv/bin/python -m box login")
                 return
-            self.chat = await self._resolve_chat()
-            if self.chat is None:
+            # Keep looking until the chat exists, so creating it later needs no restart.
+            while (chat := await self._resolve_chat()) is None:
                 self.status.update(
                     state="error",
                     detail=f'Chat "{self.cfg["chat"]}" not found. Create it in Telegram '
-                           'or change "chat" in config.json (use "me" for Saved Messages).')
-                return
+                           '(checked again every minute) or change "chat" in config.json '
+                           '(use "me" for Saved Messages).')
+                await asyncio.sleep(60)
+            self.chat = chat
             self.chat_key = str(getattr(self.chat, "id", "me"))
             self.client.add_event_handler(self._on_new_message,
                                           events.NewMessage(chats=self.chat))
