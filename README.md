@@ -95,9 +95,12 @@ The web UI is plain static files, so it is also published to GitHub Pages
 that touches `static/`. The Pages copy holds no data; the address of your Box server is built in from the
 repository variable `BOX_SERVER`.
 
-**Signing in** — no passwords or forms: send `login` to your Box chat on Telegram. Box replies with a
-link that works once, for 10 minutes; tapping it opens the web UI signed in on that device (the link's
-code sits in the URL fragment, so it never reaches any server but yours).
+**Signing in** — no passwords or forms, confirmed from your own Telegram chat:
+- *A device without Telegram (laptop):* the sign-in screen shows a code such as `login KD7 4PX`. Send
+  that message in your Box chat from your phone; the screen signs itself in within a couple of seconds.
+- *The phone with Telegram:* send just `login`; Box replies with a link that works once, for 10 minutes,
+  and opens the web UI signed in (the code sits in the URL fragment, so it never reaches any server but
+  yours).
 
 To run the server somewhere always on (any small Linux VM with a public IP; an `e2-micro` on Google
 Cloud's free tier is enough):

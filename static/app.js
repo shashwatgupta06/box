@@ -77,20 +77,63 @@ function showSignIn(message) {
   $("#heroTitle").textContent = "Box";
   $("#heroMeta").textContent = "Your saves from Telegram";
   $("#crumbs").innerHTML = "";
+  $("#signOutBtn").hidden = true;
   const noServer = STATIC_HOST && !SERVER;
   $("#board").innerHTML = `<div class="empty-state signin"><div class="art">${I.key}</div>
     <h3>${noServer ? "No Box server configured" : "Sign in to your Box"}</h3>
     ${message ? `<p class="signin-error">${esc(message)}</p>` : ""}
     ${noServer ? "<p>This copy of the page was published without a server address.</p>" : `
-    <ol class="signin-steps">
-      <li><span>1</span>Open your <b>Box</b> channel in Telegram.</li>
-      <li><span>2</span>Send the message <code>login</code>.</li>
-      <li><span>3</span>Tap the link Box replies with — it opens this page signed in.</li>
-    </ol>
-    <p class="signin-note">Once per device. The link works one time, for 10 minutes.</p>`}</div>`;
-  $("#signOutBtn").hidden = true;
+    <p>Send this message in your <b>Box</b> channel on Telegram, from any device:</p>
+    <div class="pair-code" id="pairCode"><span class="pair-word">login</span> <span id="pairText">· · ·</span></div>
+    <p class="signin-note" id="pairNote">This page signs itself in as soon as Box sees the message.</p>
+    <div class="signin-or"><span>or, on the phone with Telegram</span></div>
+    <p class="signin-alt">Send just <code>login</code> and tap the link Box replies with.</p>`}</div>`;
+  if (!noServer) startPairing();
 }
+
+// Pairing: this screen shows a code; "login <code>" sent in the Box chat approves it, and the poll below
+// receives the token. A new code is fetched when one expires.
+let pairing = null;
+async function startPairing() {
+  if (pairing) clearTimeout(pairing.timer);
+  pairing = { id: null, timer: null };
+  const mine = pairing;
+  try {
+    const r = await fetch(base() + "/api/pair", { method: "POST" });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || "Could not start signing in.");
+    if (mine !== pairing || !signedOut) return;
+    mine.id = j.id;
+    $("#pairText") && ($("#pairText").textContent = j.code);
+    pollPairing(mine);
+  } catch (e) {
+    if ($("#pairNote")) $("#pairNote").textContent = e.message === "Failed to fetch" ? "Can't reach your Box server right now." : e.message;
+    mine.timer = setTimeout(() => { if (mine === pairing && signedOut) startPairing(); }, 15000);
+  }
+}
+function pollPairing(mine) {
+  mine.timer = setTimeout(async () => {
+    if (mine !== pairing || !signedOut) return;
+    try {
+      const r = await fetch(`${base()}/api/pair/${encodeURIComponent(mine.id)}`);
+      if (r.status === 410) { startPairing(); return; }
+      const j = await r.json();
+      if (j.status === "approved") {
+        store.set("box.token", j.token || "");
+        pairing = null;
+        signedIn();
+        toast("Signed in");
+        renderHero();
+        refresh();
+        return;
+      }
+    } catch (e) { /* network blip: keep polling */ }
+    pollPairing(mine);
+  }, document.hidden ? 6000 : 2000);
+}
+
 function signedIn() {
+  if (pairing) { clearTimeout(pairing.timer); pairing = null; }
   if (!signedOut) return;
   signedOut = false;
   document.documentElement.classList.remove("signed-out");

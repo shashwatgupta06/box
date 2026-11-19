@@ -30,7 +30,8 @@ SPEC_RE = re.compile(r"^\s*(?:([^./\n()]{1,48}?)\s*(?:(?://+|\.)\s*([^./\n()]{1,
                      r"(?:\(\s*([^()\n]{1,150}?)\s*\)\s*\.?)?\s*$")
 LABEL_BEFORE_SECONDS = 15   # a label sent this close before an item is that item's share-sheet comment
 LOGIN_COMMANDS = {"login", "/login", "log in", "sign in"}
-LOGIN_REPLY_MARK = "🔑 Box sign-in link"   # Box's own reply; never saved as an item
+LOGIN_REPLY_MARK = "🔑 Box sign-in"   # Box's own replies start with this; never saved as items
+LOGIN_PAIR_RE = re.compile(r"^(?:/?login|log in|sign in)\s+([A-Za-z0-9][A-Za-z0-9 -]{3,14})$", re.I)
 LOGIN_MAX_AGE_SECONDS = 180               # older "login" messages (seen on catch-up) get no new link
 
 SESSION_PATH = str(DATA_DIR / "box_session")
@@ -122,6 +123,11 @@ class SyncEngine:
             return
         if text.lower() in LOGIN_COMMANDS:
             await self._send_login_link(msg)
+            self._advance(msg)
+            return
+        m = LOGIN_PAIR_RE.match(text)
+        if m:
+            await self._approve_pairing(msg, m.group(1))
             self._advance(msg)
             return
         url = _first_url(msg)
@@ -288,8 +294,20 @@ class SyncEngine:
         else:
             code = auth.issue_code()
             minutes = auth.CODE_TTL_SECONDS // 60
-            text = (f"{LOGIN_REPLY_MARK} — tap to open your Box on this device. "
+            text = (f"{LOGIN_REPLY_MARK} link — tap to open your Box on this device. "
                     f"Works once, for {minutes} minutes:\n{ui.split('#')[0]}#login={code}")
+        await self.client.send_message(self.chat, text, link_preview=False)
+
+    async def _approve_pairing(self, msg, code):
+        """'login KD7 4PX' approves the device showing that code on its sign-in screen."""
+        age = (datetime.now(timezone.utc) - msg.date).total_seconds() if msg.date else 0
+        if age > LOGIN_MAX_AGE_SECONDS:
+            return
+        if auth.approve_pairing(code):
+            text = f"{LOGIN_REPLY_MARK}: done — the device showing {code.upper()} is now signed in."
+        else:
+            text = (f"{LOGIN_REPLY_MARK}: no device is waiting with code {code.upper()}. "
+                    "Check the code on its screen (codes last 10 minutes).")
         await self.client.send_message(self.chat, text, link_preview=False)
 
     async def _next_message(self, msg):

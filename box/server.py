@@ -56,7 +56,8 @@ async def require_token(request: Request, call_next):
     """With an access_token configured, /api and /media need it: as a Bearer header, or as ?token= for
     plain links such as <img src>. The UI shell itself stays public; it holds no data."""
     path = request.url.path
-    if _TOKEN and request.method != "OPTIONS" and path.startswith(("/api/", "/media/")) and path != "/api/login":
+    public = path == "/api/login" or path == "/api/pair" or path.startswith("/api/pair/")
+    if _TOKEN and request.method != "OPTIONS" and path.startswith(("/api/", "/media/")) and not public:
         header = request.headers.get("authorization", "")
         given = header[7:] if header.lower().startswith("bearer ") else request.query_params.get("token", "")
         if not secrets.compare_digest(given.encode(), _TOKEN.encode()):
@@ -120,6 +121,26 @@ def login(body: Login):
     if not auth.redeem(body.code.strip()):
         raise HTTPException(401, "This sign-in link has expired or was already used. Send login again.")
     return {"token": _TOKEN}
+
+
+@app.post("/api/pair")
+def pair_start():
+    """Start signing in a device without Telegram: returns a code to send in the Box chat."""
+    started = auth.start_pairing()
+    if not started:
+        raise HTTPException(429, "Too many sign-in requests are waiting. Try again in a few minutes.")
+    pid, code = started
+    return {"id": pid, "code": auth.format_pair_code(code), "expires_in": auth.PAIR_TTL_SECONDS}
+
+
+@app.get("/api/pair/{pid}")
+def pair_status(pid: str):
+    status = auth.pairing_status(pid)
+    if status == "approved":
+        return {"status": "approved", "token": _TOKEN}
+    if status == "gone":
+        raise HTTPException(410, "This sign-in code expired.")
+    return {"status": "pending"}
 
 
 @app.get("/api/state")
