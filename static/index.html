@@ -1,115 +1,156 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#fbf6f6">
 <title>Box</title>
 <link rel="stylesheet" href="static/style.css">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📦</text></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect x='8' y='8' width='84' height='84' rx='26' fill='%231c1617'/><path d='M30 40l20-11 20 11v22L50 73 30 62z' fill='none' stroke='%23fbf6f6' stroke-width='6' stroke-linejoin='round'/><path d='M30 40l20 11 20-11M50 51v22' fill='none' stroke='%23fbf6f6' stroke-width='6' stroke-linejoin='round'/></svg>">
+<script>
+  // Apply the saved or system theme before first paint.
+  try {
+    const t = localStorage.getItem("box.theme");
+    if (t) document.documentElement.dataset.theme = t;
+  } catch (e) {}
+</script>
 </head>
 <body>
-<div class="frame">
-  <aside class="sidebar">
-    <div class="logo"><span class="logo-dots">: :</span> Box</div>
-    <nav class="views">
-      <button class="view-btn active" data-view="all">
-        <svg viewBox="0 0 24 24"><path d="M7 7h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z"/><path d="M9 7V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-1"/></svg>
-        All</button>
-      <button class="view-btn" data-view="unsorted">
-        <svg viewBox="0 0 24 24"><path d="M4 5h16l-6 7v5l-4 2v-7L4 5Z"/></svg>
-        Unsorted</button>
-      <button class="view-btn" data-view="trash">
-        <svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2m-7 0 1 12h8l1-12"/></svg>
-        Trash</button>
+
+<header class="topbar">
+  <button class="logo-btn glass" id="logoBtn" title="All saves" aria-label="All saves">
+    <svg viewBox="0 0 24 24"><path d="M4 8.2 12 4l8 4.2v7.6L12 20l-8-4.2z"/><path d="m4 8.2 8 4.3 8-4.3M12 12.5V20"/></svg>
+  </button>
+
+  <nav class="navpill glass" id="viewNav" aria-label="Views">
+    <button data-view="all" class="active">All</button>
+    <button data-view="unsorted">Unsorted</button>
+    <button data-view="trash">Trash</button>
+  </nav>
+
+  <label class="searchpill glass">
+    <span class="scope-chip" id="scopeChip"><span class="scope-thumb" id="scopeThumb"></span><span id="scopeName">Box</span></span>
+    <input type="search" id="searchInput" placeholder="Search your Box…" autocomplete="off" enterkeyhint="search">
+    <kbd class="kbd">/</kbd>
+  </label>
+
+  <div class="rightpill glass">
+    <button class="status" id="statusBtn" title="Sync status"><span class="dot" id="statusDot"></span></button>
+    <button class="create" id="addBtn">Add</button>
+    <button class="menu-btn" id="menuBtn" aria-label="Collections and settings">
+      <svg viewBox="0 0 24 24"><path d="M5 9h14M5 15h14"/></svg>
+    </button>
+  </div>
+</header>
+
+<main class="page">
+  <section class="hero">
+    <nav class="crumbs" id="crumbs" aria-label="Breadcrumb"></nav>
+    <h1 id="heroTitle">All saves</h1>
+    <p class="meta" id="heroMeta">&nbsp;</p>
+    <div class="tools" id="tools"></div>
+    <nav class="kinds" id="kindTabs" aria-label="Filter by type">
+      <button class="active" data-kind="">Everything</button>
+      <button data-kind="article">Articles</button>
+      <button data-kind="video">Videos</button>
+      <button data-kind="image">Images</button>
+      <button data-kind="file">Files</button>
+      <button data-kind="note">Notes</button>
     </nav>
-    <div class="collections-label">Collections</div>
-    <ul class="collections" id="collectionList"></ul>
-    <button class="new-collection" id="newCollectionBtn"><span>+</span> New collection</button>
-  </aside>
+  </section>
 
-  <main class="main">
-    <header class="topbar">
-      <button class="theme-toggle" id="themeToggle" title="Toggle theme">
-        <span class="knob"><svg viewBox="0 0 24 24"><path d="M21 12.8A8.5 8.5 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg></span>
-      </button>
-      <div class="top-right">
-        <span class="sync-pill" id="backupPill" title="Click to back up now" style="cursor:pointer"><span class="dot"></span><span id="backupText">backup</span></span>
-        <span class="sync-pill" id="syncPill"><span class="dot"></span><span id="syncText">starting…</span></span>
-      </div>
-    </header>
+  <section class="shelf" id="shelf" aria-label="Collections"></section>
+  <h2 class="section-label" id="boardLabel" hidden>Latest saves</h2>
+  <section class="board" id="board" aria-live="polite"></section>
+</main>
 
-    <div class="filterbar">
-      <button class="icon-btn" id="searchBtn" title="Search">
-        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-      </button>
-      <input type="text" id="searchInput" class="search-input" placeholder="Search Box…">
-      <nav class="tabs" id="kindTabs">
-        <button class="tab active" data-kind="">All</button>
-        <button class="tab" data-kind="article">Article</button>
-        <button class="tab" data-kind="video">Video</button>
-        <button class="tab" data-kind="image">Image</button>
-        <button class="tab" data-kind="file">Files</button>
-        <button class="tab" data-kind="note">Notes</button>
-      </nav>
-      <div class="filter-right">
-        <button class="icon-btn layout-btn active" id="gridBtn" title="Grid view">
-          <svg viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg>
-        </button>
-        <button class="icon-btn layout-btn" id="listBtn" title="List view">
-          <svg viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="5" cy="6" r="1.2" fill="currentColor" stroke="none"/><circle cx="5" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="5" cy="18" r="1.2" fill="currentColor" stroke="none"/></svg>
-        </button>
-        <button class="add-btn" id="addBtn" title="Add a link">+</button>
-      </div>
+<!-- Collections drawer -->
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" aria-label="Collections and settings">
+  <div class="drawer-head">
+    <span class="drawer-title">Your Box</span>
+    <button class="icon-round" id="drawerClose" aria-label="Close">
+      <svg viewBox="0 0 24 24"><path d="m7 7 10 10M17 7 7 17"/></svg>
+    </button>
+  </div>
+  <nav class="drawer-views" id="drawerViews"></nav>
+  <div class="drawer-label">Collections <button class="link-btn" id="drawerNewCol">+ New</button></div>
+  <ul class="tree" id="tree"></ul>
+  <div class="drawer-foot">
+    <div class="status-row" id="syncRow"><span class="dot"></span><span class="txt">Starting…</span></div>
+    <button class="status-row clickable" id="backupRow" title="Back up now"><span class="dot"></span><span class="txt">Backup</span></button>
+    <div class="foot-actions">
+      <button class="chip-btn" id="themeBtn">Dark mode</button>
+      <button class="chip-btn" id="connectBtn" hidden>Connection</button>
     </div>
+  </div>
+</aside>
 
-    <section class="content" id="content"></section>
-  </main>
-</div>
+<!-- Item detail -->
+<dialog id="dlgItem" class="sheet sheet-item">
+  <div class="item-media" id="itemMedia"></div>
+  <div class="item-body">
+    <div class="item-src" id="itemSrc"></div>
+    <h2 id="itemTitle"></h2>
+    <p class="item-desc" id="itemDesc"></p>
+    <button class="item-col" id="itemCol"></button>
+    <div class="item-actions" id="itemActions"></div>
+  </div>
+  <button class="icon-round sheet-close" data-close aria-label="Close">
+    <svg viewBox="0 0 24 24"><path d="m7 7 10 10M17 7 7 17"/></svg>
+  </button>
+</dialog>
 
-<dialog id="dlgCollection" class="dlg">
+<!-- Add a link -->
+<dialog id="dlgAdd" class="sheet">
   <form method="dialog">
-    <h2>New collection</h2>
-    <label>Name<input type="text" id="colName" required placeholder="e.g. To-Buy"></label>
-    <label>Inside<select id="colParent"></select></label>
-    <div class="dlg-actions">
-      <button value="cancel" class="ghost">Cancel</button>
-      <button value="ok" class="primary" id="colCreate">Create</button>
+    <h2>Save a link</h2>
+    <label class="field">Link<input type="url" id="addUrl" required placeholder="https://…" autocomplete="off"></label>
+    <label class="field">Collection<select id="addParent"></select></label>
+    <div class="sheet-actions">
+      <button value="cancel" class="btn ghost" formnovalidate>Cancel</button>
+      <button value="ok" class="btn primary">Save to Box</button>
     </div>
   </form>
 </dialog>
 
-<dialog id="dlgAdd" class="dlg">
+<!-- New / rename collection -->
+<dialog id="dlgCollection" class="sheet">
   <form method="dialog">
-    <h2>Add a link</h2>
-    <label>URL<input type="url" id="addUrl" required placeholder="https://…"></label>
-    <label>Collection<select id="addParent"></select></label>
-    <div class="dlg-actions">
-      <button value="cancel" class="ghost">Cancel</button>
-      <button value="ok" class="primary" id="addCreate">Save to Box</button>
+    <h2 id="colDlgTitle">New collection</h2>
+    <label class="field">Name<input type="text" id="colName" required placeholder="e.g. Career" autocomplete="off"></label>
+    <label class="field" id="colParentField">Inside<select id="colParent"></select></label>
+    <div class="sheet-actions">
+      <button value="cancel" class="btn ghost" formnovalidate>Cancel</button>
+      <button value="ok" class="btn primary" id="colOk">Create</button>
     </div>
   </form>
 </dialog>
 
-<dialog id="dlgMove" class="dlg">
-  <h2>Move to collection</h2>
+<!-- Move -->
+<dialog id="dlgMove" class="sheet">
+  <h2>Move to…</h2>
   <div class="move-list" id="moveList"></div>
-  <div class="dlg-actions"><button class="ghost" id="moveCancel">Cancel</button></div>
+  <div class="sheet-actions"><button class="btn ghost" data-close>Cancel</button></div>
 </dialog>
 
-<dialog id="dlgConnect" class="dlg">
+<!-- Connect (static hosting only) -->
+<dialog id="dlgConnect" class="sheet">
   <form method="dialog">
     <h2>Connect to your Box</h2>
-    <p class="dlg-note">This page is only the interface. Your items live on your own Box server — enter its
-      address and the access token from its <code>config.json</code>. Both are kept in this browser only.</p>
-    <p class="dlg-error" id="connectError"></p>
-    <label>Server address<input type="url" id="connServer" required placeholder="https://box.example.com"></label>
-    <label>Access token<input type="password" id="connToken" autocomplete="off" placeholder="access_token"></label>
-    <div class="dlg-actions">
-      <button value="forget" class="ghost" id="connForget" formnovalidate>Forget</button>
-      <button value="ok" class="primary">Connect</button>
+    <p class="sheet-note">This page is only the interface. Your saves live on your own Box server — enter its
+      address and the access token from its <code>config.json</code>. Both stay in this browser.</p>
+    <p class="sheet-error" id="connectError"></p>
+    <label class="field">Server address<input type="url" id="connServer" required placeholder="https://box.example.com"></label>
+    <label class="field">Access token<input type="password" id="connToken" autocomplete="off" placeholder="access_token"></label>
+    <div class="sheet-actions">
+      <button value="forget" class="btn ghost" id="connForget" formnovalidate>Forget</button>
+      <button value="ok" class="btn primary">Connect</button>
     </div>
   </form>
 </dialog>
+
+<div class="toast" id="toast" role="status"></div>
 
 <script src="static/app.js"></script>
 </body>
