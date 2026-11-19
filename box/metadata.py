@@ -244,5 +244,9 @@ async def enrich_item(item_id, url, preview=None):
         fields["site_name"] = site_name_for(url)
     if not fields.get("title") and not item["title"]:
         fields["title"] = fallback_title(url)
+    # A title given in a label wins, including one applied while the preview was being fetched.
+    current = db.get_item(item_id)
+    if current and current["custom_title"]:
+        fields.pop("title", None)
     if fields:
         db.update_item(item_id, **fields)

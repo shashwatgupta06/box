@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS items(
     mime TEXT,
     collection_id INTEGER REFERENCES collections(id) ON DELETE SET NULL,
     trashed INTEGER DEFAULT 0,
+    custom_title INTEGER DEFAULT 0,
     tg_date TEXT,
     created_at TEXT DEFAULT (datetime('now')),
     UNIQUE(chat_id, message_id)
@@ -53,6 +54,9 @@ def conn():
 def init_db():
     with _lock:
         conn().executescript(SCHEMA)
+        cols = {r[1] for r in conn().execute("PRAGMA table_info(items)")}
+        if "custom_title" not in cols:   # databases created before titles could be set from a label
+            conn().execute("ALTER TABLE items ADD COLUMN custom_title INTEGER DEFAULT 0")
         conn().commit()
 
 
@@ -150,7 +154,7 @@ def delete_collection(cid):
 
 # ---------- items ----------
 
-ITEM_FIELDS = {"chat_id", "message_id", "kind", "url", "title", "description", "site_name",
+ITEM_FIELDS = {"chat_id", "message_id", "kind", "url", "title", "custom_title", "description", "site_name",
                "image_url", "image_path", "text", "file_path", "file_name", "mime",
                "collection_id", "trashed", "tg_date"}
 

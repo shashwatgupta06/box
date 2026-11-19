@@ -23,8 +23,10 @@ from .metadata import classify_url, enrich_item
 log = logging.getLogger("box.sync")
 
 URL_RE = re.compile(r"https?://\S+")
-# "Collection", "Collection.Sub", "Collection // Sub", each optionally ending in "."
-SPEC_RE = re.compile(r"^\s*([^./\n]{1,48}?)\s*(?:(?://+|\.)\s*([^./\n]{1,48}?)\s*)?\.?\s*$")
+# "Collection", "Collection.Sub", "Collection // Sub", each optionally ending in "." and optionally followed by a
+# title in parentheses: "Career.New.(Kitchen appliance)". A title alone, "(Kitchen appliance)", also works.
+SPEC_RE = re.compile(r"^\s*(?:([^./\n()]{1,48}?)\s*(?:(?://+|\.)\s*([^./\n()]{1,48}?)\s*)?\.?)?\s*"
+                     r"(?:\(\s*([^()\n]{1,150}?)\s*\)\s*\.?)?\s*$")
 LABEL_BEFORE_SECONDS = 15   # a label sent this close before an item is that item's share-sheet comment
 
 SESSION_PATH = str(DATA_DIR / "box_session")
@@ -37,7 +39,7 @@ class SyncEngine:
         self.chat = None
         self.chat_key = None
         self.status = {"state": "starting", "detail": "", "last_sync": None}
-        self.pending_labels = {}   # message id of a shared item -> (collection, subcategory) sent just before it
+        self.pending_labels = {}   # message id of a shared item -> (collection, subcategory, title) sent just before it
 
     async def run(self):
         try:
@@ -180,7 +182,7 @@ class SyncEngine:
         item_id = db.create_item(fields)
         label = self.pending_labels.pop(msg.id, None)
         if label:
-            db.update_item(item_id, collection_id=db.resolve_spec(*label))
+            _apply_label(item_id, label)
         if url:
             # fetch link preview in the background; don't block the sync loop
             asyncio.create_task(self._enrich(item_id, msg, url))
@@ -228,14 +230,14 @@ class SyncEngine:
     async def _handle_text(self, msg, text):
         """A plain text message: a collection label for a shared item, or a stand-alone note."""
         m = SPEC_RE.match(text)
-        spec = (m.group(1), m.group(2)) if (m and len(text) <= 100 and "\n" not in text
-                                            and not URL_RE.search(text)) else None
+        spec = m.groups() if (m and (m.group(1) or m.group(3)) and len(text) <= 220 and "\n" not in text
+                              and not URL_RE.search(text)) else None
         reply_id = getattr(getattr(msg, "reply_to", None), "reply_to_msg_id", None)
 
         if spec and reply_id:
             target = db.get_item_by_msg(msg.chat_id, reply_id)
             if target:
-                db.update_item(target["id"], collection_id=db.resolve_spec(*spec))
+                _apply_label(target["id"], spec)
                 return
 
         if spec and not reply_id:
@@ -245,16 +247,16 @@ class SyncEngine:
                     (nxt.date - msg.date).total_seconds() <= LABEL_BEFORE_SECONDS:
                 saved = db.get_item_by_msg(msg.chat_id, nxt.id)
                 if saved:   # a live update for the item was handled first
-                    db.update_item(saved["id"], collection_id=db.resolve_spec(*spec))
+                    _apply_label(saved["id"], spec)
                 else:
                     self.pending_labels[nxt.id] = spec
                 return
-            # 2. A label sent after the item. Assign when the item has no collection yet, the label names a
-            #    subcategory, or it names a collection that already exists.
+            # 2. A label sent after the item. Assign when the item has no collection yet, or the label is
+            #    explicit (names a subcategory or a title) or names a collection that already exists.
             target = db.prev_item_before(msg.chat_id, msg.id)
-            if target and (target["collection_id"] is None or spec[1] is not None
-                           or db.find_collection_by_name(spec[0])):
-                db.update_item(target["id"], collection_id=db.resolve_spec(*spec))
+            if target and (target["collection_id"] is None or spec[1] or spec[2]
+                           or (spec[0] and db.find_collection_by_name(spec[0]))):
+                _apply_label(target["id"], spec)
                 return
 
         # otherwise store it as a note
@@ -273,6 +275,18 @@ class SyncEngine:
             if nxt is not None:
                 return nxt
         return None
+
+
+def _apply_label(item_id, spec):
+    """spec = (collection, subcategory, title); any part may be None."""
+    col, sub, title = spec
+    fields = {}
+    if col:
+        fields["collection_id"] = db.resolve_spec(col, sub)
+    if title:
+        fields["title"] = title
+        fields["custom_title"] = 1
+    db.update_item(item_id, **fields)
 
 
 def _first_url(msg):

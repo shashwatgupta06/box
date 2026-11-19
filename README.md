@@ -26,6 +26,8 @@ backups are connected.</sub>
 
    That's `Collection.Subcategory` (the subcategory is optional; `To-Buy // Kitchen` works too).
    Collections and subcategories are created automatically if they don't exist yet.
+   Add a title in parentheses to name the card yourself — `Career.New.(Kitchen appliance)` — or
+   send just `(Kitchen appliance)` to set the title only.
    You can also **reply** to any earlier shared message with a collection name.
 3. If you don't send a collection message, the item lands in **Unsorted** and
    you can move it from the web UI later.
