@@ -12,6 +12,7 @@ import re
 from pathlib import Path
 
 from telethon import TelegramClient, events
+from telethon.tl.types import MessageMediaWebPage, WebPage, WebPagePending
 
 from . import db
 from .config import DATA_DIR, MEDIA_DIR
@@ -177,7 +178,47 @@ class SyncEngine:
         item_id = db.create_item(fields)
         if url:
             # fetch link preview in the background; don't block the sync loop
-            asyncio.create_task(enrich_item(item_id, url))
+            asyncio.create_task(self._enrich(item_id, msg, url))
+
+    async def _enrich(self, item_id, msg, url):
+        try:
+            preview = await self._telegram_preview(msg)
+        except Exception:
+            log.exception("reading Telegram's link preview failed")
+            preview = None
+        await enrich_item(item_id, url, preview=preview)
+
+    async def _telegram_preview(self, msg):
+        """The link preview Telegram attached to the message, if any.
+
+        Telegram's servers can fetch previews from sites that refuse ordinary servers (Instagram, LinkedIn,
+        Facebook), so this is tried before scraping the page ourselves. A preview still being generated
+        (WebPagePending) is re-read a couple of times."""
+        for delay in (0, 3, 8):
+            if delay:
+                await asyncio.sleep(delay)
+                msg = await self.client.get_messages(self.chat, ids=msg.id) or msg
+            media = getattr(msg, "media", None)
+            if not isinstance(media, MessageMediaWebPage):
+                return None
+            page = media.webpage
+            if isinstance(page, WebPage):
+                return await self._preview_fields(msg, page)
+            if not isinstance(page, WebPagePending):
+                return None   # WebPageEmpty / WebPageNotModified: Telegram has nothing for this link
+        return None
+
+    async def _preview_fields(self, msg, page):
+        out = {"title": page.title or page.author, "description": page.description,
+               "site_name": page.site_name}
+        if page.type in ("video", "gif") or (page.embed_type or "").startswith("video"):
+            out["kind"] = "video"
+        if page.photo:
+            path = await self.client.download_media(
+                page.photo, file=str(MEDIA_DIR / f"tgprev_{msg.chat_id}_{msg.id}.jpg"))
+            if path:
+                out["image_path"] = Path(path).name
+        return {k: v for k, v in out.items() if v}
 
     async def _handle_text(self, msg, text):
         """A plain text message: either a collection spec for the previous

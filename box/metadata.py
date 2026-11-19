@@ -1,5 +1,14 @@
-"""Fetch link previews (title / description / og:image) for saved URLs."""
+"""Fetch link previews (title / description / preview image) for saved URLs.
+
+Order of sources for a link shared through Telegram:
+  1. the preview Telegram attached to the message (passed in by the sync engine);
+  2. a site's public oEmbed endpoint (YouTube, Vimeo, TikTok, Spotify, SoundCloud, X, Reddit);
+  3. the page's own Open Graph / Twitter-card tags.
+Each later source only fills fields the earlier ones left empty.
+"""
 import logging
+import re
+from html import unescape
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
@@ -15,21 +24,62 @@ UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
 
 VIDEO_HOSTS = ("youtube.com", "youtu.be", "vimeo.com", "tiktok.com",
-               "twitch.tv", "dailymotion.com")
+               "twitch.tv", "dailymotion.com", "fb.watch")
 IMAGE_EXT = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif")
 FILE_EXT = (".pdf", ".zip", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".epub")
 
+# Display names for common sites, used when a page gives no site name of its own.
+SITE_NAMES = {
+    "youtube.com": "YouTube", "youtu.be": "YouTube", "instagram.com": "Instagram",
+    "linkedin.com": "LinkedIn", "lnkd.in": "LinkedIn", "x.com": "X", "twitter.com": "X",
+    "facebook.com": "Facebook", "fb.watch": "Facebook", "reddit.com": "Reddit", "redd.it": "Reddit",
+    "tiktok.com": "TikTok", "vimeo.com": "Vimeo", "spotify.com": "Spotify", "soundcloud.com": "SoundCloud",
+    "pinterest.com": "Pinterest", "pin.it": "Pinterest", "threads.net": "Threads", "github.com": "GitHub",
+    "medium.com": "Medium", "substack.com": "Substack", "amazon.com": "Amazon", "wikipedia.org": "Wikipedia",
+}
+
+# Public oEmbed endpoints that need no API key: (host suffixes, endpoint).
+OEMBED = [
+    (("youtube.com", "youtu.be"), "https://www.youtube.com/oembed"),
+    (("vimeo.com",), "https://vimeo.com/api/oembed.json"),
+    (("tiktok.com",), "https://www.tiktok.com/oembed"),
+    (("spotify.com",), "https://open.spotify.com/oembed"),
+    (("soundcloud.com",), "https://soundcloud.com/oembed"),
+    (("x.com", "twitter.com"), "https://publish.twitter.com/oembed"),
+    (("reddit.com",), "https://www.reddit.com/oembed"),
+]
+
+# What login walls and blocked pages call themselves; never worth keeping as a title.
+GENERIC_TITLES = {"instagram", "linkedin", "facebook", "x", "twitter", "log in", "login", "sign up",
+                  "login • instagram", "instagram • photos and videos", "sign up | linkedin",
+                  "linkedin: log in or sign up", "reddit - dive into anything", "just a moment...",
+                  "tiktok - make your day", "access denied", "403 forbidden", "attention required!"}
+
 
 def _host(url):
-    return urlparse(url).netloc.lower().removeprefix("www.")
+    return urlparse(url).netloc.lower().removeprefix("www.").removeprefix("m.")
+
+
+def _matches(host, suffixes):
+    return any(host == s or host.endswith("." + s) for s in suffixes)
+
+
+def site_name_for(url):
+    host = _host(url)
+    for suffix, name in SITE_NAMES.items():
+        if _matches(host, (suffix,)):
+            return name
+    return host
 
 
 def classify_url(url):
     host = _host(url)
     path = urlparse(url).path.lower()
-    if any(host == h or host.endswith("." + h) for h in VIDEO_HOSTS):
+    if _matches(host, VIDEO_HOSTS):
         return "video"
     if "instagram.com" in host and ("/reel" in path or "/tv" in path):
+        return "video"
+    if "facebook.com" in host and ("/watch" in path or "/videos/" in path or "/reel" in path):
         return "video"
     if path.endswith(IMAGE_EXT):
         return "image"
@@ -38,24 +88,53 @@ def classify_url(url):
     return "article"
 
 
+def _clean_title(t):
+    t = (t or "").strip()
+    return None if not t or t.lower() in GENERIC_TITLES else t
+
+
+async def _oembed(session, url, host):
+    for suffixes, endpoint in OEMBED:
+        if not _matches(host, suffixes):
+            continue
+        params = {"url": url, "format": "json"}
+        if endpoint.startswith("https://publish.twitter.com"):
+            params = {"url": url, "omit_script": "1"}
+        async with session.get(endpoint, params=params) as r:
+            if r.status != 200:
+                return {}
+            j = await r.json(content_type=None)
+        title = j.get("title")
+        if not title and j.get("html"):
+            # X returns the post as an HTML blockquote; its first paragraph is the post text.
+            m = re.search(r"<p[^>]*>(.*?)</p>", j["html"], re.S)
+            if m:
+                title = unescape(re.sub(r"<[^>]+>", "", m.group(1))).strip()[:200]
+        return {"title": title, "description": j.get("author_name"),
+                "site_name": site_name_for(url) if site_name_for(url) != host else (j.get("provider_name") or host),
+                "image_url": j.get("thumbnail_url")}
+    return {}
+
+
 async def fetch_metadata(url):
     host = _host(url)
-    out = {"site_name": host}
+    out = {"site_name": site_name_for(url)}
     timeout = aiohttp.ClientTimeout(total=15)
     try:
         async with aiohttp.ClientSession(headers={"User-Agent": UA}, timeout=timeout) as s:
-            # YouTube blocks scraping; its oEmbed endpoint is reliable.
-            if host in ("youtube.com", "youtu.be") or host.endswith(".youtube.com"):
-                async with s.get("https://www.youtube.com/oembed",
-                                 params={"url": url, "format": "json"}) as r:
-                    if r.status == 200:
-                        j = await r.json()
-                        return {"title": j.get("title"), "site_name": "YouTube",
-                                "description": j.get("author_name"),
-                                "image_url": j.get("thumbnail_url")}
+            try:
+                emb = await _oembed(s, url, host)
+            except Exception as e:
+                log.info("oEmbed failed for %s: %s", url, e)
+                emb = {}
+            if emb.get("title") and (emb.get("image_url") or _matches(host, ("x.com", "twitter.com", "reddit.com"))):
+                return {k: v for k, v in emb.items() if v}
             async with s.get(url, allow_redirects=True) as r:
                 ctype = r.headers.get("content-type", "")
                 final_url = str(r.url)
+                if r.status != 200:   # blocked or gone: keep whatever oEmbed gave, never an error page's title
+                    out.update({k: v for k, v in emb.items() if v})
+                    return out
                 if "html" not in ctype:
                     name = Path(urlparse(url).path).name
                     out["title"] = name or url
@@ -74,12 +153,15 @@ async def fetch_metadata(url):
         title = meta("og:title", "twitter:title")
         if not title and soup.title and soup.title.string:
             title = soup.title.string.strip()
-        out["title"] = title
+        out["title"] = _clean_title(title)
         out["description"] = meta("og:description", "twitter:description", "description")
-        out["site_name"] = meta("og:site_name") or host
+        out["site_name"] = meta("og:site_name") or out["site_name"]
         img = meta("og:image", "og:image:url", "twitter:image")
         if img:
             out["image_url"] = urljoin(final_url, img)
+        for k, v in emb.items():   # oEmbed fields beat a scraped page that came back thin
+            if v and not out.get(k):
+                out[k] = v
     except Exception as e:
         log.warning("metadata fetch failed for %s: %s", url, e)
     return out
@@ -110,24 +192,43 @@ async def download_image(url, dest_name, max_mb=10):
         return None
 
 
-async def enrich_item(item_id, url):
-    """Fill in title/description/site/preview image for a saved link."""
-    meta = await fetch_metadata(url)
+async def enrich_item(item_id, url, preview=None):
+    """Fill in title/description/site/preview image for a saved link.
+
+    `preview` holds what Telegram's own link preview gave (title, description, site_name, image_path, kind);
+    the page is only fetched for what is still missing."""
     item = db.get_item(item_id)
     if not item:
         return
+    pv = dict(preview or {})
+    pv["title"] = _clean_title(pv.get("title"))
     fields = {}
-    if meta.get("title"):
-        fields["title"] = meta["title"]
-    if meta.get("description") and not item["description"]:
-        fields["description"] = meta["description"]
-    if meta.get("site_name"):
-        fields["site_name"] = meta["site_name"]
-    if meta.get("image_url"):
-        fields["image_url"] = meta["image_url"]
-        if not item["image_path"]:
+    if pv.get("title"):
+        fields["title"] = pv["title"]
+    if pv.get("description") and not item["description"]:
+        fields["description"] = pv["description"]
+    if pv.get("site_name"):
+        fields["site_name"] = pv["site_name"]
+    if pv.get("image_path") and not item["image_path"]:
+        fields["image_path"] = pv["image_path"]
+    if pv.get("kind") == "video" and item["kind"] == "article":
+        fields["kind"] = "video"
+
+    if not (fields.get("title") and (fields.get("image_path") or item["image_path"])):
+        meta = await fetch_metadata(url)
+        meta["title"] = _clean_title(meta.get("title"))
+        if meta.get("title") and not fields.get("title"):
+            fields["title"] = meta["title"]
+        if meta.get("description") and not item["description"] and not fields.get("description"):
+            fields["description"] = meta["description"]
+        if meta.get("site_name") and not fields.get("site_name"):
+            fields["site_name"] = meta["site_name"]
+        if meta.get("image_url") and not (fields.get("image_path") or item["image_path"]):
+            fields["image_url"] = meta["image_url"]
             fname = await download_image(meta["image_url"], f"og_{item_id}")
             if fname:
                 fields["image_path"] = fname
+    if not fields.get("site_name") and not item["site_name"]:
+        fields["site_name"] = site_name_for(url)
     if fields:
         db.update_item(item_id, **fields)
