@@ -67,6 +67,11 @@ $("#dlgConnect").addEventListener("close", () => {
   refresh();
 });
 
+// "Not connected" and "unauthorized" are handled by the connect dialog; keep them out of the console.
+window.addEventListener("unhandledrejection", (e) => {
+  if (["not connected", "unauthorized"].includes(e.reason?.message)) e.preventDefault();
+});
+
 async function api(path, opts = {}) {
   if (STATIC_HOST && !conn.server) {
     openConnect();
