@@ -69,6 +69,7 @@ function mediaUrl(u) {
 }
 
 let connectOpen = false;
+let connectDismissed = false;   // closed without connecting: background refreshes must not reopen it
 function openConnect(message) {
   if (connectOpen) return;
   connectOpen = true;
@@ -86,7 +87,12 @@ $("#dlgConnect").addEventListener("close", () => {
   } else if (v === "ok") {
     store.set("box.server", $("#connServer").value.trim());
     store.set("box.token", $("#connToken").value.trim());
-  } else return;
+  } else {
+    connectDismissed = true;
+    renderBoard();
+    return;
+  }
+  connectDismissed = false;
   refresh();
 });
 
@@ -97,7 +103,7 @@ window.addEventListener("unhandledrejection", (e) => {
 
 async function api(path, opts = {}) {
   if (STATIC_HOST && !conn.server) {
-    openConnect();
+    if (!connectDismissed) openConnect();
     throw new Error("not connected");
   }
   const headers = { ...(opts.headers || {}) };
@@ -106,11 +112,11 @@ async function api(path, opts = {}) {
   try {
     r = await fetch(base() + path, { ...opts, headers });
   } catch (e) {
-    if (STATIC_HOST) openConnect(`Could not reach ${conn.server}.`);
+    if (STATIC_HOST && !connectDismissed) openConnect(`Could not reach ${conn.server}.`);
     throw e;
   }
   if (r.status === 401) {
-    openConnect("The server refused the access token.");
+    if (!connectDismissed) openConnect("The server refused the access token.");
     throw new Error("unauthorized");
   }
   if (!r.ok) throw new Error(await r.text());
@@ -394,6 +400,13 @@ function columnCount() {
 function renderBoard() {
   const board = $("#board");
   board.innerHTML = "";
+  if (STATIC_HOST && !conn.server) {
+    board.innerHTML = `<div class="empty-state"><div class="art">${I.box}</div><h3>Connect your Box</h3>
+      <p>This page is the interface for a Box server you run yourself. Connect it to see your saves.</p>
+      <p style="margin-top:18px"><button class="btn primary" id="emptyConnect">Connect</button></p></div>`;
+    $("#emptyConnect").addEventListener("click", () => openConnect());
+    return;
+  }
   if (!state.loaded) return;
   if (!state.items.length) {
     board.innerHTML = emptyState();
@@ -784,7 +797,7 @@ window.addEventListener("resize", () => {
   matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", syncThemeUI);
   Object.assign(state, fromHash());
   lastCols = columnCount();
-  showSkeleton();
+  if (STATIC_HOST && !conn.server) renderBoard(); else showSkeleton();
   renderHero();
   refresh();
   setInterval(() => { if (!document.hidden) loadState(); }, 20000);   // status dot + counts
