@@ -1,9 +1,11 @@
 """Telegram sync engine: watches the Box chat and mirrors it into the local DB.
 
-Message convention (as described by the user of the app):
+Message convention:
   1. Share anything (link / post / photo / file) into the Box chat.
-  2. Send the destination as the next message: "To-Buy // Kitchen"
-     ("Collection // Subcategory"; the subcategory part is optional).
+  2. Name the destination in a short message: "Career.Computer Vision." or "To-Buy // Kitchen"
+     (collection, then an optional subcategory; both are created if missing). The label may be
+     - a comment typed in the share sheet, which Telegram sends just BEFORE the shared item, or
+     - the next message after the item.
   Replying to an earlier shared message with a collection name also works.
 """
 import asyncio
@@ -21,7 +23,9 @@ from .metadata import classify_url, enrich_item
 log = logging.getLogger("box.sync")
 
 URL_RE = re.compile(r"https?://\S+")
-SPEC_RE = re.compile(r"^\s*([^/\n]{1,48}?)\s*(?://+\s*([^/\n]{1,48}?)\s*)?$")
+# "Collection", "Collection.Sub", "Collection // Sub", each optionally ending in "."
+SPEC_RE = re.compile(r"^\s*([^./\n]{1,48}?)\s*(?:(?://+|\.)\s*([^./\n]{1,48}?)\s*)?\.?\s*$")
+LABEL_BEFORE_SECONDS = 15   # a label sent this close before an item is that item's share-sheet comment
 
 SESSION_PATH = str(DATA_DIR / "box_session")
 
@@ -33,6 +37,7 @@ class SyncEngine:
         self.chat = None
         self.chat_key = None
         self.status = {"state": "starting", "detail": "", "last_sync": None}
+        self.pending_labels = {}   # message id of a shared item -> (collection, subcategory) sent just before it
 
     async def run(self):
         try:
@@ -106,13 +111,8 @@ class SyncEngine:
             self._advance(msg)
             return
         text = (msg.message or "").strip()
-        urls = URL_RE.findall(text)
-        for ent in (msg.entities or []):
-            u = getattr(ent, "url", None)
-            if u:
-                urls.append(u)
-        url = urls[0] if urls else None
-        if url or isinstance(msg.media, (MessageMediaPhoto, MessageMediaDocument)):
+        url = _first_url(msg)
+        if _is_item(msg):
             await self._save_item(msg, url, text)
         elif text:
             await self._handle_text(msg, text)
@@ -178,6 +178,9 @@ class SyncEngine:
         elif fields.get("file_name") and not url:
             fields["title"] = fields["file_name"]
         item_id = db.create_item(fields)
+        label = self.pending_labels.pop(msg.id, None)
+        if label:
+            db.update_item(item_id, collection_id=db.resolve_spec(*label))
         if url:
             # fetch link preview in the background; don't block the sync loop
             asyncio.create_task(self._enrich(item_id, msg, url))
@@ -223,33 +226,67 @@ class SyncEngine:
         return {k: v for k, v in out.items() if v}
 
     async def _handle_text(self, msg, text):
-        """A plain text message: either a collection spec for the previous
-        shared item, or a stand-alone note."""
-        target = None
-        reply_id = getattr(getattr(msg, "reply_to", None), "reply_to_msg_id", None)
-        if reply_id:
-            target = db.get_item_by_msg(msg.chat_id, reply_id)
-        else:
-            target = db.prev_item_before(msg.chat_id, msg.id)
-
+        """A plain text message: a collection label for a shared item, or a stand-alone note."""
         m = SPEC_RE.match(text)
-        spec_like = (m and len(text) <= 80 and "\n" not in text
-                     and not URL_RE.search(text))
-        if target and spec_like:
-            col, sub = m.group(1), m.group(2)
-            # Assign when: it targets an unassigned item, uses the explicit
-            # "//" form, or names a collection that already exists.
-            if (target["collection_id"] is None or sub is not None
-                    or db.find_collection_by_name(col)):
-                cid = db.resolve_spec(col, sub)
-                db.update_item(target["id"], collection_id=cid)
+        spec = (m.group(1), m.group(2)) if (m and len(text) <= 100 and "\n" not in text
+                                            and not URL_RE.search(text)) else None
+        reply_id = getattr(getattr(msg, "reply_to", None), "reply_to_msg_id", None)
+
+        if spec and reply_id:
+            target = db.get_item_by_msg(msg.chat_id, reply_id)
+            if target:
+                db.update_item(target["id"], collection_id=db.resolve_spec(*spec))
                 return
+
+        if spec and not reply_id:
+            # 1. Share-sheet comment: Telegram sends it right before the shared item.
+            nxt = await self._next_message(msg)
+            if nxt is not None and _is_item(nxt) and \
+                    (nxt.date - msg.date).total_seconds() <= LABEL_BEFORE_SECONDS:
+                saved = db.get_item_by_msg(msg.chat_id, nxt.id)
+                if saved:   # a live update for the item was handled first
+                    db.update_item(saved["id"], collection_id=db.resolve_spec(*spec))
+                else:
+                    self.pending_labels[nxt.id] = spec
+                return
+            # 2. A label sent after the item. Assign when the item has no collection yet, the label names a
+            #    subcategory, or it names a collection that already exists.
+            target = db.prev_item_before(msg.chat_id, msg.id)
+            if target and (target["collection_id"] is None or spec[1] is not None
+                           or db.find_collection_by_name(spec[0])):
+                db.update_item(target["id"], collection_id=db.resolve_spec(*spec))
+                return
+
         # otherwise store it as a note
         db.create_item({
             "chat_id": msg.chat_id, "message_id": msg.id, "kind": "note",
             "text": text, "title": text[:120],
             "tg_date": msg.date.astimezone().isoformat() if msg.date else None,
         })
+
+    async def _next_message(self, msg):
+        """The message right after `msg`; waits a few seconds for it when `msg` just arrived live."""
+        for delay in (0, 2, 4):
+            if delay:
+                await asyncio.sleep(delay)
+            nxt = await self.client.get_messages(self.chat, ids=msg.id + 1)
+            if nxt is not None:
+                return nxt
+        return None
+
+
+def _first_url(msg):
+    text = msg.message or ""
+    urls = URL_RE.findall(text)
+    for ent in (msg.entities or []):
+        u = getattr(ent, "url", None)
+        if u:
+            urls.append(u)
+    return urls[0] if urls else None
+
+
+def _is_item(msg):
+    return bool(_first_url(msg)) or isinstance(msg.media, (MessageMediaPhoto, MessageMediaDocument))
 
 
 def _now_iso():

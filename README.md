@@ -17,14 +17,15 @@ backups are connected.</sub>
 
 1. On your phone, share any post / article / video / photo / file to your
    **Box** chat on Telegram.
-2. Send the destination as the **next message** in the same chat:
+2. Name the destination in a short message — either as the **comment** in Telegram's share sheet
+   (Telegram sends it just before the shared item) or as the **next message** after it:
 
    ```
-   To-Buy // Kitchen
+   Career.Computer Vision.
    ```
 
-   That's `Collection // Subcategory` (the `// Subcategory` part is optional).
-   Collections are created automatically if they don't exist yet.
+   That's `Collection.Subcategory` (the subcategory is optional; `To-Buy // Kitchen` works too).
+   Collections and subcategories are created automatically if they don't exist yet.
    You can also **reply** to any earlier shared message with a collection name.
 3. If you don't send a collection message, the item lands in **Unsorted** and
    you can move it from the web UI later.
