@@ -1,7 +1,7 @@
 name: Pages
 
-# Publishes the web UI (static/) to GitHub Pages. The UI connects to a Box server whose address and access
-# token each visitor enters once; the server itself runs elsewhere (see deploy/).
+# Publishes the web UI (static/) to GitHub Pages, with the Box server's address from the repository variable
+# BOX_SERVER. Each browser signs in once through a link Box sends in Telegram; the server runs elsewhere (deploy/).
 on:
   push:
     branches: [main]
@@ -26,10 +26,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Assemble the site
+        env:
+          BOX_SERVER: ${{ vars.BOX_SERVER }}   # repository variable: the Box server's https address
         run: |
           mkdir -p _site/static
           cp static/index.html _site/index.html
           cp -r static/. _site/static/
+          printf 'window.BOX_SERVER = "%s";\n' "$BOX_SERVER" > _site/static/config.js
           touch _site/.nojekyll
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

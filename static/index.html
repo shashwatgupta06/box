@@ -81,7 +81,7 @@
     <button class="status-row clickable" id="backupRow" title="Back up now"><span class="dot"></span><span class="txt">Backup</span></button>
     <div class="foot-actions">
       <button class="chip-btn" id="themeBtn">Dark mode</button>
-      <button class="chip-btn" id="connectBtn" hidden>Connection</button>
+      <button class="chip-btn" id="signOutBtn" hidden>Sign out</button>
     </div>
   </div>
 </aside>
@@ -134,24 +134,9 @@
   <div class="sheet-actions"><button class="btn ghost" data-close>Cancel</button></div>
 </dialog>
 
-<!-- Connect (static hosting only) -->
-<dialog id="dlgConnect" class="sheet">
-  <form method="dialog">
-    <h2>Connect to your Box</h2>
-    <p class="sheet-note">This page is only the interface. Your saves live on your own Box server — enter its
-      address and the access token from its <code>config.json</code>. Both stay in this browser.</p>
-    <p class="sheet-error" id="connectError"></p>
-    <label class="field">Server address<input type="url" id="connServer" required placeholder="https://box.example.com"></label>
-    <label class="field">Access token<input type="password" id="connToken" autocomplete="off" placeholder="access_token"></label>
-    <div class="sheet-actions">
-      <button value="forget" class="btn ghost" id="connForget" formnovalidate>Forget</button>
-      <button value="ok" class="btn primary">Connect</button>
-    </div>
-  </form>
-</dialog>
-
 <div class="toast" id="toast" role="status"></div>
 
+<script src="static/config.js"></script>
 <script src="static/app.js"></script>
 </body>
 </html>

@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import db
+from . import auth, db
 from .config import ROOT, MEDIA_DIR, load_config, ensure_dirs, telegram_configured
 from .metadata import classify_url, enrich_item
 from .sync import SyncEngine
@@ -56,7 +56,7 @@ async def require_token(request: Request, call_next):
     """With an access_token configured, /api and /media need it: as a Bearer header, or as ?token= for
     plain links such as <img src>. The UI shell itself stays public; it holds no data."""
     path = request.url.path
-    if _TOKEN and request.method != "OPTIONS" and path.startswith(("/api/", "/media/")):
+    if _TOKEN and request.method != "OPTIONS" and path.startswith(("/api/", "/media/")) and path != "/api/login":
         header = request.headers.get("authorization", "")
         given = header[7:] if header.lower().startswith("bearer ") else request.query_params.get("token", "")
         if not secrets.compare_digest(given.encode(), _TOKEN.encode()):
@@ -108,6 +108,18 @@ def _serialize(item):
         "date": item["tg_date"] or item["created_at"],
         "trashed": bool(item["trashed"]),
     }
+
+
+class Login(BaseModel):
+    code: str
+
+
+@app.post("/api/login")
+def login(body: Login):
+    """Swap a one-time code from a Telegram sign-in link for the access token."""
+    if not auth.redeem(body.code.strip()):
+        raise HTTPException(401, "This sign-in link has expired or was already used. Send login again.")
+    return {"token": _TOKEN}
 
 
 @app.get("/api/state")

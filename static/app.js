@@ -41,6 +41,7 @@ const I = {
   sync: '<svg viewBox="0 0 24 24"><path d="M19.5 12a7.5 7.5 0 0 1-13 5.1M4.5 12a7.5 7.5 0 0 1 13-5.1"/><path d="M17.5 3.5v3.4h-3.4M6.5 20.5v-3.4h3.4"/></svg>',
   cloud: '<svg viewBox="0 0 24 24"><path d="M7 18.5a4 4 0 0 1-.6-8 5.5 5.5 0 0 1 10.6-1.3 4.6 4.6 0 0 1 .5 9.3z"/><path d="m9.5 13.5 2.5-2.5 2.5 2.5M12 11v5.5"/></svg>',
   search: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.4-4.4"/></svg>',
+  key: '<svg viewBox="0 0 24 24"><circle cx="8" cy="15" r="3.5"/><path d="m10.5 12.5 8-8M16 7l2.5 2.5M14 9l2 2"/></svg>',
   kind: {
     article: '<svg viewBox="0 0 24 24"><path d="M7 4.5h10a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1v-13a1 1 0 0 1 1-1z"/><path d="M9 8.5h6M9 12h6M9 15.5h4"/></svg>',
     video: '<svg viewBox="0 0 24 24"><path d="M8 5.8v12.4a.8.8 0 0 0 1.2.7l9.6-6.2a.8.8 0 0 0 0-1.4L9.2 5.1A.8.8 0 0 0 8 5.8z"/></svg>',
@@ -53,75 +54,102 @@ const KIND_LABEL = { article: "Link", video: "Video", image: "Image", file: "Fil
 
 /* ---------- server connection ----------
  * Served by the Box server itself (python -m box run), the UI talks to its own origin.
- * Served as a static site (e.g. GitHub Pages), it talks to the server saved in this browser. */
+ * Served as a static site (GitHub Pages), it talks to the server built into static/config.js at deploy time.
+ * Access: the server's token, obtained once per browser through a Telegram sign-in link (#login=<code>). */
 const STATIC_HOST = location.hostname.endsWith("github.io") || location.protocol === "file:";
-const conn = {
-  get server() { return (store.get("box.server", "") || "").replace(/\/+$/, ""); },
-  get token() { return store.get("box.token", "") || ""; },
-};
-const base = () => (STATIC_HOST ? conn.server : "");
+const SERVER = String(window.BOX_SERVER || "").replace(/\/+$/, "");
+const base = () => (STATIC_HOST ? SERVER : "");
+const token = () => store.get("box.token", "") || "";
 
 // Server-relative media links (/media/…) need the server address and, for <img>/links, the token in the URL.
 function mediaUrl(u) {
   if (!u || !u.startsWith("/media/")) return u;
-  const t = conn.token ? `?token=${encodeURIComponent(conn.token)}` : "";
+  const t = token() ? `?token=${encodeURIComponent(token())}` : "";
   return base() + u + t;
 }
 
-let connectOpen = false;
-let connectDismissed = false;   // closed without connecting: background refreshes must not reopen it
-function openConnect(message) {
-  if (connectOpen) return;
-  connectOpen = true;
-  $("#connServer").value = conn.server;
-  $("#connToken").value = conn.token;
-  $("#connectError").textContent = message || "";
-  $("#dlgConnect").showModal();
+let signedOut = false;
+function showSignIn(message) {
+  signedOut = true;
+  document.documentElement.classList.add("signed-out");
+  $("#shelf").innerHTML = "";
+  $("#boardLabel").hidden = true;
+  $("#heroTitle").textContent = "Box";
+  $("#heroMeta").textContent = "Your saves from Telegram";
+  $("#crumbs").innerHTML = "";
+  const noServer = STATIC_HOST && !SERVER;
+  $("#board").innerHTML = `<div class="empty-state signin"><div class="art">${I.key}</div>
+    <h3>${noServer ? "No Box server configured" : "Sign in to your Box"}</h3>
+    ${message ? `<p class="signin-error">${esc(message)}</p>` : ""}
+    ${noServer ? "<p>This copy of the page was published without a server address.</p>" : `
+    <ol class="signin-steps">
+      <li><span>1</span>Open your <b>Box</b> channel in Telegram.</li>
+      <li><span>2</span>Send the message <code>login</code>.</li>
+      <li><span>3</span>Tap the link Box replies with — it opens this page signed in.</li>
+    </ol>
+    <p class="signin-note">Once per device. The link works one time, for 10 minutes.</p>`}</div>`;
+  $("#signOutBtn").hidden = true;
 }
-$("#dlgConnect").addEventListener("close", () => {
-  connectOpen = false;
-  const v = $("#dlgConnect").returnValue;
-  if (v === "forget") {
-    store.del("box.server");
-    store.del("box.token");
-  } else if (v === "ok") {
-    store.set("box.server", $("#connServer").value.trim());
-    store.set("box.token", $("#connToken").value.trim());
-  } else {
-    connectDismissed = true;
-    renderBoard();
-    return;
-  }
-  connectDismissed = false;
-  refresh();
-});
+function signedIn() {
+  if (!signedOut) return;
+  signedOut = false;
+  document.documentElement.classList.remove("signed-out");
+}
 
-// "Not connected" and "unauthorized" are handled by the connect dialog; keep them out of the console.
+// "Not signed in" is shown by the sign-in screen; keep it out of the console.
 window.addEventListener("unhandledrejection", (e) => {
-  if (["not connected", "unauthorized"].includes(e.reason?.message)) e.preventDefault();
+  if (["not signed in", "unauthorized"].includes(e.reason?.message)) e.preventDefault();
 });
 
 async function api(path, opts = {}) {
-  if (STATIC_HOST && !conn.server) {
-    if (!connectDismissed) openConnect();
-    throw new Error("not connected");
+  if (STATIC_HOST && (!SERVER || !token())) {
+    showSignIn();
+    throw new Error("not signed in");
   }
   const headers = { ...(opts.headers || {}) };
-  if (conn.token) headers.Authorization = `Bearer ${conn.token}`;
+  if (token()) headers.Authorization = `Bearer ${token()}`;
   let r;
   try {
     r = await fetch(base() + path, { ...opts, headers });
   } catch (e) {
-    if (STATIC_HOST && !connectDismissed) openConnect(`Could not reach ${conn.server}.`);
+    toast("Can't reach your Box server");
     throw e;
   }
   if (r.status === 401) {
-    if (!connectDismissed) openConnect("The server refused the access token.");
+    const had = !!token();
+    store.del("box.token");
+    showSignIn(had ? "Your sign-in is no longer valid. Send login again." : "");
     throw new Error("unauthorized");
   }
   if (!r.ok) throw new Error(await r.text());
+  signedIn();
   return r.json();
 }
+
+// A Telegram sign-in link opens the page at #login=<code>: swap the code for the token once.
+async function redeemLoginLink() {
+  const m = location.hash.match(/^#login=([\w-]+)/);
+  if (!m) return;
+  history.replaceState(null, "", location.pathname + location.search);   // never leave the code in the URL
+  try {
+    const r = await fetch(base() + "/api/login", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: m[1] }) });
+    if (!r.ok) {
+      let detail = "This sign-in link has expired or was already used.";
+      try { detail = (await r.json()).detail || detail; } catch (e) {}
+      store.del("box.token");
+      showSignIn(detail);
+      return false;
+    }
+    store.set("box.token", (await r.json()).token || "");
+    toast("Signed in");
+  } catch (e) {
+    showSignIn("Couldn't reach your Box server to sign in. Try the link again.");
+    return false;
+  }
+  return true;
+}
+
 const jsonBody = (method, obj) => ({
   method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(obj),
 });
@@ -203,6 +231,7 @@ async function loadState() {
   indexCollections(s.collections);
   if (state.collectionId && !state.byId.has(state.collectionId)) state.collectionId = null;
   renderStatus(s.status, s.backup);
+  $("#signOutBtn").hidden = !token();
   renderDrawer();
   renderHero();
   if (state.loaded) renderShelf();   // the items may have arrived before the collections
@@ -272,6 +301,7 @@ $("#statusBtn").addEventListener("click", () => openDrawer());
 
 /* ---------- hero: title, breadcrumb, tools ---------- */
 function renderHero() {
+  if (signedOut) return;
   const c = current();
   const crumbs = $("#crumbs");
   crumbs.innerHTML = "";
@@ -366,6 +396,7 @@ function coverImages(c, n = 3) {
 }
 
 function renderShelf() {
+  if (signedOut) return;
   const shelf = $("#shelf");
   shelf.innerHTML = "";
   $("#boardLabel").hidden = true;
@@ -400,13 +431,7 @@ function columnCount() {
 function renderBoard() {
   const board = $("#board");
   board.innerHTML = "";
-  if (STATIC_HOST && !conn.server) {
-    board.innerHTML = `<div class="empty-state"><div class="art">${I.box}</div><h3>Connect your Box</h3>
-      <p>This page is the interface for a Box server you run yourself. Connect it to see your saves.</p>
-      <p style="margin-top:18px"><button class="btn primary" id="emptyConnect">Connect</button></p></div>`;
-    $("#emptyConnect").addEventListener("click", () => openConnect());
-    return;
-  }
+  if (signedOut) return;
   if (!state.loaded) return;
   if (!state.items.length) {
     board.innerHTML = emptyState();
@@ -627,7 +652,7 @@ function openMove(it) {
 $$("dialog").forEach((d) => {
   d.addEventListener("click", (e) => {
     if (e.target.closest("[data-close]")) d.close();
-    else if (e.target === d && d.id !== "dlgConnect") {
+    else if (e.target === d) {
       const r = d.getBoundingClientRect();
       const inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
       if (!inside) d.close();
@@ -710,10 +735,12 @@ $("#themeBtn").addEventListener("click", () => {
   store.set("box.theme", next);
   syncThemeUI();
 });
-if (STATIC_HOST) {
-  $("#connectBtn").hidden = false;
-  $("#connectBtn").addEventListener("click", () => { closeDrawer(); openConnect(); });
-}
+$("#signOutBtn").addEventListener("click", () => {
+  if (!confirm("Sign out of Box on this device?")) return;
+  store.del("box.token");
+  closeDrawer();
+  showSignIn();
+});
 
 /* ---------- navigation ---------- */
 function go({ view, collectionId }) {
@@ -795,12 +822,16 @@ window.addEventListener("resize", () => {
 (function boot() {
   syncThemeUI();
   matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", syncThemeUI);
-  Object.assign(state, fromHash());
   lastCols = columnCount();
-  if (STATIC_HOST && !conn.server) renderBoard(); else showSkeleton();
-  renderHero();
-  refresh();
-  setInterval(() => { if (!document.hidden) loadState(); }, 20000);   // status dot + counts
-  setInterval(() => { if (!document.hidden && !document.querySelector("dialog[open]")) loadItems(); }, 30000);
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
+  showSkeleton();
+  redeemLoginLink().then((result) => {
+    if (result === false) return;   // the sign-in screen is showing why the link failed
+    Object.assign(state, fromHash());
+    if (STATIC_HOST && (!SERVER || !token())) { showSignIn(); return; }
+    renderHero();
+    refresh();
+  });
+  setInterval(() => { if (!document.hidden && !signedOut) loadState(); }, 20000);   // status dot + counts
+  setInterval(() => { if (!document.hidden && !signedOut && !document.querySelector("dialog[open]")) loadItems(); }, 30000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden && !signedOut) refresh(); });
 })();

@@ -2,11 +2,12 @@
 # One-time setup of a Box server on a fresh Debian/Ubuntu machine with a public IP.
 # Run ON the server as a regular user with sudo:
 #
-#   bash setup-server.sh <hostname> <ui-origin>
+#   bash setup-server.sh <hostname> <ui-origin> [ui-url]
 #
 #   <hostname>   DNS name pointing at this machine, used for the HTTPS certificate. Without a domain,
 #                <ip-with-dashes>.sslip.io works, e.g. 203-0-113-7.sslip.io.
 #   <ui-origin>  where the web UI is served from, e.g. https://<user>.github.io
+#   [ui-url]     full address of the web UI, used in Telegram sign-in links (default: <ui-origin>/box/)
 #
 # Installs Caddy (automatic HTTPS) in front of Box on 127.0.0.1:8750, clones Box into ~/box, creates config.json
 # with a fresh access token and the UI origin, and runs Box as the systemd service "box". Ports 80 and 443 must
@@ -14,6 +15,7 @@
 set -euo pipefail
 HOST="${1:?usage: setup-server.sh <hostname> <ui-origin>}"
 ORIGIN="${2:?usage: setup-server.sh <hostname> <ui-origin>}"
+UI_URL="${3:-${ORIGIN%/}/box/}"
 REPO="${BOX_REPO:-https://github.com/shashwatgupta06/box.git}"
 DIR="$HOME/box"
 
@@ -29,10 +31,10 @@ git pull -q --ff-only
 
 if [ ! -f config.json ]; then
     TOKEN=$(.venv/bin/python -m box token)
-    python3 - "$ORIGIN" "$TOKEN" <<'EOF'
+    python3 - "$ORIGIN" "$TOKEN" "$UI_URL" <<'EOF'
 import json, sys
 cfg = json.load(open("config.example.json"))
-cfg.update({"host": "127.0.0.1", "access_token": sys.argv[2], "cors_origins": [sys.argv[1]]})
+cfg.update({"host": "127.0.0.1", "access_token": sys.argv[2], "cors_origins": [sys.argv[1]], "ui_url": sys.argv[3]})
 cfg["backup"]["enabled"] = False   # turn on after `rclone config` (see README)
 json.dump(cfg, open("config.json", "w"), indent=2)
 EOF

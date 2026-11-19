@@ -15,6 +15,7 @@ DEFAULTS = {
     "max_file_mb": 50,      # skip downloading shared files bigger than this
     "access_token": "",     # when set, /api and /media require it (needed once Box is reachable remotely)
     "cors_origins": [],     # web origins allowed to call the API, e.g. ["https://<user>.github.io"]
+    "ui_url": "",           # web UI address used in Telegram sign-in links, e.g. "https://<user>.github.io/box/"
 }
 
 

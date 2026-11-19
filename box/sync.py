@@ -11,12 +11,13 @@ Message convention:
 import asyncio
 import logging
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 
 from telethon import TelegramClient, events
 from telethon.tl.types import MessageMediaDocument, MessageMediaPhoto, MessageMediaWebPage, WebPage, WebPagePending
 
-from . import db
+from . import auth, db
 from .config import DATA_DIR, MEDIA_DIR
 from .metadata import classify_url, enrich_item
 
@@ -28,6 +29,9 @@ URL_RE = re.compile(r"https?://\S+")
 SPEC_RE = re.compile(r"^\s*(?:([^./\n()]{1,48}?)\s*(?:(?://+|\.)\s*([^./\n()]{1,48}?)\s*)?\.?)?\s*"
                      r"(?:\(\s*([^()\n]{1,150}?)\s*\)\s*\.?)?\s*$")
 LABEL_BEFORE_SECONDS = 15   # a label sent this close before an item is that item's share-sheet comment
+LOGIN_COMMANDS = {"login", "/login", "log in", "sign in"}
+LOGIN_REPLY_MARK = "🔑 Box sign-in link"   # Box's own reply; never saved as an item
+LOGIN_MAX_AGE_SECONDS = 180               # older "login" messages (seen on catch-up) get no new link
 
 SESSION_PATH = str(DATA_DIR / "box_session")
 
@@ -113,6 +117,13 @@ class SyncEngine:
             self._advance(msg)
             return
         text = (msg.message or "").strip()
+        if text.startswith(LOGIN_REPLY_MARK):
+            self._advance(msg)
+            return
+        if text.lower() in LOGIN_COMMANDS:
+            await self._send_login_link(msg)
+            self._advance(msg)
+            return
         url = _first_url(msg)
         if _is_item(msg):
             await self._save_item(msg, url, text)
@@ -266,6 +277,21 @@ class SyncEngine:
             "tg_date": msg.date.astimezone().isoformat() if msg.date else None,
         })
 
+    async def _send_login_link(self, msg):
+        """Reply in the chat with a one-time link that signs a browser in to the web UI."""
+        age = (datetime.now(timezone.utc) - msg.date).total_seconds() if msg.date else 0
+        if age > LOGIN_MAX_AGE_SECONDS:
+            return
+        ui = (self.cfg.get("ui_url") or "").strip()
+        if not ui:
+            text = f'{LOGIN_REPLY_MARK} unavailable: set "ui_url" in config.json on the Box server.'
+        else:
+            code = auth.issue_code()
+            minutes = auth.CODE_TTL_SECONDS // 60
+            text = (f"{LOGIN_REPLY_MARK} — tap to open your Box on this device. "
+                    f"Works once, for {minutes} minutes:\n{ui.split('#')[0]}#login={code}")
+        await self.client.send_message(self.chat, text, link_preview=False)
+
     async def _next_message(self, msg):
         """The message right after `msg`; waits a few seconds for it when `msg` just arrived live."""
         for delay in (0, 2, 4):
@@ -300,6 +326,8 @@ def _first_url(msg):
 
 
 def _is_item(msg):
+    if (msg.message or "").startswith(LOGIN_REPLY_MARK):
+        return False
     return bool(_first_url(msg)) or isinstance(msg.media, (MessageMediaPhoto, MessageMediaDocument))
 
 

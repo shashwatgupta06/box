@@ -6,6 +6,7 @@
   "max_file_mb": 50,
   "access_token": "",
   "cors_origins": [],
+  "ui_url": "",
   "backup": {
     "enabled": true,
     "remote": "gdrive",

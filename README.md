@@ -92,8 +92,12 @@ Seed sample data to explore the UI first:
 
 The web UI is plain static files, so it is also published to GitHub Pages
 (<https://shashwatgupta06.github.io/box/>) by `.github/workflows/pages.yml` on every push to `main`
-that touches `static/`. The Pages copy holds no data: on first visit it asks for the address of *your*
-Box server and its access token, and keeps both in that browser only.
+that touches `static/`. The Pages copy holds no data; the address of your Box server is built in from the
+repository variable `BOX_SERVER`.
+
+**Signing in** — no passwords or forms: send `login` to your Box chat on Telegram. Box replies with a
+link that works once, for 10 minutes; tapping it opens the web UI signed in on that device (the link's
+code sits in the URL fragment, so it never reaches any server but yours).
 
 To run the server somewhere always on (any small Linux VM with a public IP; an `e2-micro` on Google
 Cloud's free tier is enough):
@@ -106,12 +110,14 @@ bash deploy/setup-server.sh <ip-with-dashes>.sslip.io https://<user>.github.io
 
 `setup-server.sh` installs [Caddy](https://caddyserver.com/) for automatic HTTPS, runs Box as a
 systemd service on `127.0.0.1:8750` behind it, and writes a `config.json` with a fresh
-`access_token` and the Pages origin in `cors_origins`. Open ports 80 and 443 to the server, add your
+`access_token`, the Pages origin in `cors_origins` and the UI address in `ui_url` (used in sign-in
+links). Open ports 80 and 443 to the server, add your
 Telegram `api_id` / `api_hash` to `config.json`, run `.venv/bin/python -m box login` once, and
 `sudo systemctl restart box`. Later updates: `bash deploy/update-server.sh` on the server.
 
 With `access_token` set, every `/api` and `/media` request must carry it (as a Bearer header, or
-`?token=` for images and file links); generate one with `python -m box token`. Leave it empty only
+`?token=` for images and file links); browsers get it through the Telegram sign-in link. Generate a new
+one with `python -m box token` to sign every device out. Leave it empty only
 when Box listens on `127.0.0.1` for your own machine.
 
 ## Daily Google Drive backup
@@ -174,8 +180,8 @@ data/            local state: database, media, backups (never committed)
 ## Notes
 
 - `config.json` options: `chat` (chat title or `"me"`), `host` and `port`,
-  `max_file_mb` (largest shared file to download), `access_token`, `cors_origins`, and the
-  `backup` block.
+  `max_file_mb` (largest shared file to download), `access_token`, `cors_origins`, `ui_url`, and
+  the `backup` block.
   It's gitignored — `config.example.json` is the template.
 - Trash keeps items until you delete them permanently from the Trash view.
 - Never share `data/box_session.session` — it grants access to your Telegram
