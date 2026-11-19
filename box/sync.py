@@ -12,7 +12,7 @@ import re
 from pathlib import Path
 
 from telethon import TelegramClient, events
-from telethon.tl.types import MessageMediaWebPage, WebPage, WebPagePending
+from telethon.tl.types import MessageMediaDocument, MessageMediaPhoto, MessageMediaWebPage, WebPage, WebPagePending
 
 from . import db
 from .config import DATA_DIR, MEDIA_DIR
@@ -112,7 +112,7 @@ class SyncEngine:
             if u:
                 urls.append(u)
         url = urls[0] if urls else None
-        if url or msg.photo or msg.document:
+        if url or isinstance(msg.media, (MessageMediaPhoto, MessageMediaDocument)):
             await self._save_item(msg, url, text)
         elif text:
             await self._handle_text(msg, text)
@@ -137,14 +137,16 @@ class SyncEngine:
         }
         kind = classify_url(url) if url else "note"
 
-        if msg.photo:
+        # msg.photo / msg.document also return the picture or video of a link preview; only media the user
+        # actually sent counts here (link previews are handled by _telegram_preview).
+        if isinstance(msg.media, MessageMediaPhoto):
             path = await self.client.download_media(
                 msg, file=str(MEDIA_DIR / f"tg_{msg.chat_id}_{msg.id}.jpg"))
             if path:
                 fields["image_path"] = Path(path).name
             if not url:
                 kind = "image"
-        elif msg.document:
+        elif isinstance(msg.media, MessageMediaDocument) and msg.document:
             doc = msg.document
             mime = doc.mime_type or ""
             fields["mime"] = mime

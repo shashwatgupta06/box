@@ -72,6 +72,18 @@ def site_name_for(url):
     return host
 
 
+def fallback_title(url):
+    """A readable label for a link nobody would give us a title for, e.g. "Instagram reel"."""
+    name = site_name_for(url)
+    path = urlparse(url).path.lower()
+    for marker, what in (("/reel", "reel"), ("/p/", "post"), ("/posts/", "post"), ("/feed/update", "post"),
+                         ("/status/", "post"), ("/comments/", "post"), ("/watch", "video"), ("/videos/", "video"),
+                         ("/stories/", "story"), ("/pulse/", "article")):
+        if marker in path:
+            return f"{name} {what}"
+    return name if name != _host(url) else url
+
+
 def classify_url(url):
     host = _host(url)
     path = urlparse(url).path.lower()
@@ -230,5 +242,7 @@ async def enrich_item(item_id, url, preview=None):
                 fields["image_path"] = fname
     if not fields.get("site_name") and not item["site_name"]:
         fields["site_name"] = site_name_for(url)
+    if not fields.get("title") and not item["title"]:
+        fields["title"] = fallback_title(url)
     if fields:
         db.update_item(item_id, **fields)
