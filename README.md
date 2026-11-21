@@ -29,8 +29,25 @@ backups are connected.</sub>
    **next message** after the link. Add a title in parentheses to name the card yourself —
    `Career.New.(Kitchen appliance)` — or send just `(Kitchen appliance)` to set the title only.
    You can also **reply** to any earlier shared message with a label.
-3. If you don't send a collection message, the item lands in **Unsorted** and
+   A single name finds an existing subcategory too: `Robotics.` files into `Career / Robotics` when
+   that is the only collection called Robotics.
+3. Or just tap: with the optional bot set up (below), Box replies to every new share with one
+   button per collection. A collection with subcategories (`Career ›`) opens them; **✓ Save in …**
+   files at that level; **＋ New** asks for a name (`Career.Robotics` makes both levels).
+   **↩ Change** on the reply lets you re-file it later.
+4. If you don't label or tap anything, the item lands in **Unsorted** and
    you can move it from the web UI later.
+
+### Category buttons (optional bot)
+
+Telegram only lets bots post buttons, so this part needs a bot of your own:
+
+1. In Telegram, message **@BotFather**, send `/newbot`, pick any name and username, and copy the token.
+2. On the Box server: `.venv/bin/python -m box bot` and paste the token (input is hidden;
+   it is saved to `config.json` only).
+3. In Telegram, open your Box channel → Administrators → Add admin → your bot, with permission
+   to post and edit messages.
+4. Restart Box (`sudo systemctl restart box` on a server set up with `deploy/setup-server.sh`).
 
 Because Box logs in as *you* (via Telegram's official API), it can read the
 chat's full history — so anything shared while your computer was offline is

@@ -8,6 +8,7 @@ Message convention:
      - a comment typed in the share sheet, which Telegram sends just BEFORE the shared item, or
      - the next message after the item.
   Replying to an earlier shared message with a collection name also works.
+  With a bot set up (see picker.py), Box also replies to each new item with one button per collection.
 """
 import asyncio
 import logging
@@ -21,6 +22,7 @@ from telethon.tl.types import MessageMediaDocument, MessageMediaPhoto, MessageMe
 from . import auth, db
 from .config import DATA_DIR, MEDIA_DIR
 from .metadata import classify_url, enrich_item
+from .picker import Picker, is_bot_message
 
 log = logging.getLogger("box.sync")
 
@@ -49,6 +51,7 @@ class SyncEngine:
         self.chat_key = None
         self.status = {"state": "starting", "detail": "", "last_sync": None}
         self.pending_labels = {}   # message id of a shared item -> (collection, subcategory, title) sent just before it
+        self.picker = Picker(cfg)
 
     async def run(self):
         try:
@@ -70,6 +73,7 @@ class SyncEngine:
                 await asyncio.sleep(60)
             self.chat = chat
             self.chat_key = str(getattr(self.chat, "id", "me"))
+            await self.picker.start(self.chat)
             self.client.add_event_handler(self._on_new_message,
                                           events.NewMessage(chats=self.chat))
             while True:
@@ -88,6 +92,7 @@ class SyncEngine:
             self.status.update(state="error", detail=str(e))
 
     async def stop(self):
+        await self.picker.stop()
         if self.client:
             await self.client.disconnect()
 
@@ -122,7 +127,7 @@ class SyncEngine:
             self._advance(msg)
             return
         text = (msg.message or "").strip()
-        if text.startswith(LOGIN_REPLY_MARK):
+        if text.startswith(LOGIN_REPLY_MARK) or is_bot_message(msg):
             self._advance(msg)
             return
         if text.lower() in LOGIN_COMMANDS:
@@ -210,6 +215,7 @@ class SyncEngine:
             _apply_label(item_id, label)
         if inline:      # a label inside the message itself wins over a share-sheet comment
             _apply_label(item_id, inline)
+        self.picker.item_saved(item_id, msg)
         if url:
             # fetch link preview in the background; don't block the sync loop
             asyncio.create_task(self._enrich(item_id, msg, url))
@@ -255,7 +261,10 @@ class SyncEngine:
         return {k: v for k, v in out.items() if v}
 
     async def _handle_text(self, msg, text):
-        """A plain text message: a collection label for a shared item, or a stand-alone note."""
+        """A plain text message: a new collection's name asked for by the buttons, a collection label for a
+        shared item, or a stand-alone note."""
+        if self.picker.take_name(msg, text):
+            return
         m = SPEC_RE.match(text)
         spec = m.groups() if (m and (m.group(1) or m.group(3)) and len(text) <= 220 and "\n" not in text
                               and not URL_RE.search(text)) else None
@@ -263,8 +272,11 @@ class SyncEngine:
 
         if spec and reply_id:
             target = db.get_item_by_msg(msg.chat_id, reply_id)
+            prompt = db.get_prompt(reply_id) if not target else None    # a reply to the buttons message
+            if prompt:
+                target = db.get_item(prompt["item_id"])
             if target:
-                _apply_label(target["id"], spec)
+                self._label(target["id"], spec)
                 return
 
         if spec and not reply_id:
@@ -274,7 +286,7 @@ class SyncEngine:
                     (nxt.date - msg.date).total_seconds() <= LABEL_BEFORE_SECONDS:
                 saved = db.get_item_by_msg(msg.chat_id, nxt.id)
                 if saved:   # a live update for the item was handled first
-                    _apply_label(saved["id"], spec)
+                    self._label(saved["id"], spec)
                 else:
                     self.pending_labels[nxt.id] = spec
                 return
@@ -282,8 +294,8 @@ class SyncEngine:
             #    explicit (names a subcategory or a title) or names a collection that already exists.
             target = db.prev_item_before(msg.chat_id, msg.id)
             if target and (target["collection_id"] is None or spec[1] or spec[2]
-                           or (spec[0] and db.find_collection_by_name(spec[0]))):
-                _apply_label(target["id"], spec)
+                           or (spec[0] and db.find_named(spec[0]))):
+                self._label(target["id"], spec)
                 return
 
         # otherwise store it as a note
@@ -292,6 +304,10 @@ class SyncEngine:
             "text": text, "title": text[:120],
             "tg_date": msg.date.astimezone().isoformat() if msg.date else None,
         })
+
+    def _label(self, item_id, spec):
+        _apply_label(item_id, spec)
+        asyncio.create_task(self.picker.item_labelled(item_id))
 
     async def _send_login_link(self, msg):
         """Reply in the chat with a one-time link that signs a browser in to the web UI."""
@@ -346,7 +362,7 @@ def _inline_label(text):
             continue
         m = SPEC_RE.match(bare)
         if m and (m.group(1) or m.group(3)) and ("." in bare or "//" in bare or "(" in bare):
-            if not m.group(2) and not m.group(3) and not db.find_collection_by_name(m.group(1)):
+            if not m.group(2) and not m.group(3) and not db.find_named(m.group(1)):
                 continue    # "Great read." next to a link: only an existing collection's name counts alone
             rest_line = line.replace(bare, "", 1).strip() if bare in line else URL_RE.findall(line) and " ".join(URL_RE.findall(line))
             rest = lines[:i] + ([rest_line] if rest_line else []) + lines[i + 1:]
@@ -377,7 +393,7 @@ def _first_url(msg):
 
 
 def _is_item(msg):
-    if (msg.message or "").startswith(LOGIN_REPLY_MARK):
+    if (msg.message or "").startswith(LOGIN_REPLY_MARK) or is_bot_message(msg):
         return False
     return bool(_first_url(msg)) or isinstance(msg.media, (MessageMediaPhoto, MessageMediaDocument))
 

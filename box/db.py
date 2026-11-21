@@ -38,6 +38,13 @@ CREATE TABLE IF NOT EXISTS items(
     UNIQUE(chat_id, message_id)
 );
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS prompts(
+    prompt_id INTEGER PRIMARY KEY,          -- the bot's buttons message in the Box chat
+    item_id INTEGER NOT NULL,
+    awaiting INTEGER DEFAULT 0,             -- 1 while waiting for a typed name after "+ New"
+    parent_id INTEGER,                      -- where that new collection goes (NULL = top level)
+    updated_at TEXT DEFAULT (datetime('now'))
+);
 """
 
 
@@ -84,10 +91,6 @@ def find_collection(name, parent_id=None):
              (name.strip(), parent_id)).fetchone()
 
 
-def find_collection_by_name(name):
-    return q("SELECT * FROM collections WHERE lower(name)=lower(?)", (name.strip(),)).fetchone()
-
-
 def create_collection(name, parent_id=None):
     cur = q("INSERT INTO collections(name,parent_id) VALUES(?,?)", (name.strip(), parent_id))
     return cur.lastrowid
@@ -98,9 +101,22 @@ def find_or_create_collection(name, parent_id=None):
     return row["id"] if row else create_collection(name, parent_id)
 
 
+def find_named(name):
+    """A collection the user means by a bare name: the top-level one, else the only one at any depth with that
+    name (so "Robotics." finds Career / Robotics instead of making a second Robotics); None if absent or
+    ambiguous."""
+    top = find_collection(name)
+    if top:
+        return top
+    rows = q("SELECT * FROM collections WHERE lower(name)=lower(?)", (name.strip(),)).fetchall()
+    return rows[0] if len(rows) == 1 else None
+
+
 def resolve_spec(col_name, sub_name=None):
-    """'To-Buy', 'Kitchen' -> id of To-Buy/Kitchen, creating as needed."""
-    cid = find_or_create_collection(col_name)
+    """'To-Buy', 'Kitchen' -> id of To-Buy/Kitchen, creating as needed. A name that exists only as a
+    subcategory resolves to it."""
+    found = find_named(col_name)
+    cid = found["id"] if found else create_collection(col_name)
     if sub_name:
         return find_or_create_collection(sub_name, cid)
     return cid
@@ -225,3 +241,29 @@ def list_items(view="all", collection_id=None, kind=None, search=None):
         params.extend([like] * 5)
     sql += " ORDER BY COALESCE(tg_date, created_at) DESC, id DESC"
     return [dict(r) for r in q(sql, params).fetchall()]
+
+
+# ---------- Telegram buttons messages ----------
+
+def save_prompt(prompt_id, item_id):
+    q("""INSERT INTO prompts(prompt_id, item_id) VALUES(?,?)
+         ON CONFLICT(prompt_id) DO UPDATE SET item_id=excluded.item_id, awaiting=0, parent_id=NULL,
+         updated_at=datetime('now')""", (prompt_id, item_id))
+
+
+def await_name(prompt_id, parent_id):
+    q("UPDATE prompts SET awaiting=1, parent_id=?, updated_at=datetime('now') WHERE prompt_id=?",
+      (parent_id, prompt_id))
+
+
+def get_prompt(prompt_id):
+    return q("SELECT * FROM prompts WHERE prompt_id=?", (prompt_id,)).fetchone()
+
+
+def prompt_for_item(item_id):
+    return q("SELECT * FROM prompts WHERE item_id=? ORDER BY prompt_id DESC LIMIT 1", (item_id,)).fetchone()
+
+
+def latest_waiting_prompt(max_age_seconds):
+    return q("""SELECT * FROM prompts WHERE awaiting=1 AND updated_at >= datetime('now', ?)
+                ORDER BY updated_at DESC, prompt_id DESC LIMIT 1""", (f"-{int(max_age_seconds)} seconds",)).fetchone()

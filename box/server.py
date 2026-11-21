@@ -154,7 +154,8 @@ def state():
                   "detail": "Telegram is not set up yet — see README.md "
                             "(add api_id/api_hash to config.json, then run: python -m box login)"}
     backup = backup_engine.status if backup_engine else {"state": "idle", "detail": ""}
-    return {"status": status, "backup": backup,
+    buttons = engine.picker.status if engine else {"state": "off", "detail": ""}
+    return {"status": status, "backup": backup, "buttons": buttons,
             "collections": db.collections_tree(), "counts": db.counts(),
             "latest": db.latest_item_id()}
 

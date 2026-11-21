@@ -7,6 +7,7 @@
   "access_token": "",
   "cors_origins": [],
   "ui_url": "",
+  "bot_token": "",
   "backup": {
     "enabled": true,
     "remote": "gdrive",

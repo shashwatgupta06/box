@@ -9,6 +9,9 @@ def main():
     elif cmd == "demo":
         from .demo import main as f
         f()
+    elif cmd == "bot":
+        from .botsetup import main as f
+        f()
     elif cmd == "backup":
         from .backup import main as f
         f()
@@ -22,7 +25,7 @@ def main():
         import secrets
         print(secrets.token_urlsafe(32))
     else:
-        print("usage: python -m box [run|login|demo|backup|token]")
+        print("usage: python -m box [run|login|bot|demo|backup|token]")
         sys.exit(1)
 
 
