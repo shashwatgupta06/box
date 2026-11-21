@@ -86,7 +86,10 @@ class Picker:
 
     async def stop(self):
         if self.bot:
-            await self.bot.disconnect()
+            try:
+                await self.bot.disconnect()
+            except Exception:       # e.g. its session file already closed; never block shutdown
+                log.exception("bot disconnect failed")
 
     # ---------- asking ----------
 
