@@ -50,7 +50,9 @@ sentence description shown when you open the save. Each press handles only links
 Box reads what it can in text — the site's title and description, the text you sent with the link, the page's
 own text, a YouTube video's description and tags, an Instagram post's caption — and sends that to Claude
 (`claude-sonnet-5-5`). Videos are described from that text only. A title you typed yourself is kept; an AI title
-can be undone from the detail view.
+can be undone from the detail view. The same call also writes 15–25 search terms (topics, synonyms, names), so the
+search box finds a save by what it is about, not only by the words in its title: Box searches a SQLite full-text
+index (FTS5, best matches first, word endings and word starts matched) — no extra API call when you search.
 
 1. Get a Claude API key at [platform.claude.com](https://platform.claude.com) (API keys).
 2. On the Box server: `.venv/bin/python -m box ai-key` and paste it (input is hidden; it is checked, then

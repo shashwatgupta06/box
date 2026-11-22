@@ -44,19 +44,25 @@ No site name, no emoji, no hashtags, no quotation marks, no clickbait, no full s
 people, products and places.
 - description: 3 to 4 sentences on what the post or page contains. Use only facts from the material. Do not \
 start with "This post" or "This video", give no opinions, no hashtags and no marketing language.
+- search_terms: 15 to 25 short search terms someone might type to find this link later: its topics, broader \
+fields (for example "machine learning" for a YOLO tutorial), synonyms and abbreviations, names of people, \
+products, places and channels, and what kind of thing it is (tutorial, recipe, news, dance reel). Lowercase, one \
+to three words each, no duplicates, no hashtags.
 - enough_info: false when the material does not say what the link is about (for example only a site name, a \
-login page or an error page); then give an empty title and description.
+login page or an error page); then give an empty title, description and search_terms.
 
-Write the title and description in English, even when the material is in another language."""
+Write the title and description in English, even when the material is in another language. Write the search \
+terms in English, and when the material is in another language add the main terms in that language too."""
 
 SCHEMA = {
     "type": "object",
     "properties": {
         "title": {"type": "string"},
         "description": {"type": "string"},
+        "search_terms": {"type": "array", "items": {"type": "string"}},
         "enough_info": {"type": "boolean"},
     },
-    "required": ["title", "description", "enough_info"],
+    "required": ["title", "description", "search_terms", "enough_info"],
     "additionalProperties": False,
 }
 
@@ -187,6 +193,12 @@ async def describe(client, fields):
     out = json.loads(text)
     out["title"] = re.sub(r"\s+", " ", out.get("title") or "").strip().strip('"“”').rstrip(".")[:90]
     out["description"] = (out.get("description") or "").strip()[:900]
+    terms = []
+    for t in out.get("search_terms") or []:
+        t = re.sub(r"\s+", " ", str(t)).strip().lstrip("#").lower()[:40]
+        if t and t not in terms:
+            terms.append(t)
+    out["search_terms"] = terms[:30]
     if not out["title"] or not out["description"]:
         out["enough_info"] = False
     return out
@@ -201,7 +213,8 @@ def apply_result(item_id, result):
         db.update_item(item_id, ai_done_at=now, ai_status="no_info",
                        ai_note="Not enough information about this link to describe it.")
         return "no_info"
-    fields = {"ai_summary": result["description"], "ai_done_at": now, "ai_status": "done", "ai_note": None}
+    fields = {"ai_summary": result["description"], "ai_terms": ", ".join(result.get("search_terms") or []),
+              "ai_done_at": now, "ai_status": "done", "ai_note": None}
     if not item["custom_title"]:
         if not item["ai_title"]:
             fields["original_title"] = item["title"]

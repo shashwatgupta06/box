@@ -1,3 +1,4 @@
+import re
 import sqlite3
 import threading
 from datetime import datetime
@@ -67,7 +68,43 @@ def init_db():
         for col, decl in ADDED_COLUMNS:   # databases created before these columns existed
             if col not in cols:
                 conn().execute(f"ALTER TABLE items ADD COLUMN {col} {decl}")
+        fresh = not conn().execute("SELECT 1 FROM sqlite_master WHERE name='items_fts'").fetchone()
+        conn().executescript(FTS_SCHEMA)
+        if fresh:   # index the saves that existed before search did
+            conn().execute(f"INSERT INTO items_fts(rowid, {FTS_COLS}) SELECT id, {FTS_VALUES.format(p='')} FROM items")
         conn().commit()
+
+
+# Full-text search index (SQLite FTS5), kept in step with `items` by triggers. Columns, in ranking weight order:
+# title, AI search terms, description (AI and site), site name, the text sent with the save.
+FTS_COLS = "title, terms, description, site, body"
+FTS_VALUES = ("{p}title, {p}ai_terms, coalesce({p}ai_summary, '') || ' ' || coalesce({p}description, ''), "
+              "{p}site_name, {p}text")
+FTS_WEIGHTS = "5.0, 3.0, 1.5, 2.0, 1.0"
+FTS_SCHEMA = f"""
+CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5({FTS_COLS}, tokenize='porter unicode61 remove_diacritics 2');
+CREATE TRIGGER IF NOT EXISTS items_fts_ins AFTER INSERT ON items BEGIN
+  INSERT INTO items_fts(rowid, {FTS_COLS}) VALUES (new.id, {FTS_VALUES.format(p='new.')});
+END;
+CREATE TRIGGER IF NOT EXISTS items_fts_del AFTER DELETE ON items BEGIN
+  DELETE FROM items_fts WHERE rowid = old.id;
+END;
+CREATE TRIGGER IF NOT EXISTS items_fts_upd AFTER UPDATE OF title, ai_terms, ai_summary, description, site_name, text
+  ON items BEGIN
+  DELETE FROM items_fts WHERE rowid = old.id;
+  INSERT INTO items_fts(rowid, {FTS_COLS}) VALUES (new.id, {FTS_VALUES.format(p='new.')});
+END;
+"""
+
+
+def fts_query(text, any_word=False):
+    """Words typed in the search box -> an FTS5 query: every word must match (as a word or the start of one),
+    or any word with any_word. None when there is nothing to search for."""
+    words = re.findall(r"\w+", text or "", re.UNICODE)[:12]
+    if not words:
+        return None
+    # "dancing" (stemmed, so it also finds "dance") or a word starting with it (typing "robo" finds "robotics").
+    return (" OR " if any_word else " AND ").join(f'("{w}" OR "{w}"*)' for w in words)
 
 
 # Columns added after the first release, with their declarations.
@@ -79,6 +116,7 @@ ADDED_COLUMNS = [
     ("ai_done_at", "TEXT"),                  # when the AI pass handled this item; NULL = not yet
     ("ai_status", "TEXT"),                   # done | no_info | error
     ("ai_note", "TEXT"),                     # why the AI pass could not describe it
+    ("ai_terms", "TEXT"),                    # search terms written by the AI pass, comma-separated
 ]
 
 
@@ -210,7 +248,7 @@ def delete_collection(cid):
 ITEM_FIELDS = {"chat_id", "message_id", "kind", "url", "title", "custom_title", "description", "site_name",
                "image_url", "image_path", "text", "file_path", "file_name", "mime",
                "collection_id", "trashed", "tg_date",
-               "ai_summary", "ai_title", "original_title", "ai_done_at", "ai_status", "ai_note"}
+               "ai_summary", "ai_title", "original_title", "ai_done_at", "ai_status", "ai_note", "ai_terms"}
 
 
 def create_item(fields):
@@ -310,27 +348,44 @@ def ai_pending_items():
 
 
 def list_items(view="all", collection_id=None, kind=None, search=None, limit=None, offset=0):
-    sql = "SELECT * FROM items WHERE trashed=?"
+    """Saves in a view, newest first; with `search`, the best matches first (full-text index)."""
+    where = "items.trashed=?"
     params = [1 if view == "trash" else 0]
     if view == "unsorted":
-        sql += " AND collection_id IS NULL"
+        where += " AND items.collection_id IS NULL"
     if collection_id:
         ids = collection_descendants(int(collection_id))
-        sql += f" AND collection_id IN ({','.join('?' * len(ids))})"
+        where += f" AND items.collection_id IN ({','.join('?' * len(ids))})"
         params.extend(ids)
     if kind:
-        sql += " AND kind=?"
+        where += " AND items.kind=?"
         params.append(kind)
-    if search:
-        like = f"%{search}%"
-        sql += (" AND (title LIKE ? OR text LIKE ? OR url LIKE ? OR site_name LIKE ? OR description LIKE ?"
-                " OR ai_summary LIKE ?)")
-        params.extend([like] * 6)
-    sql += " ORDER BY COALESCE(tg_date, created_at) DESC, id DESC"
+    page = ""
     if limit:
-        sql += " LIMIT ? OFFSET ?"
-        params.extend([int(limit), int(offset or 0)])
-    return [dict(r) for r in q(sql, params).fetchall()]
+        page = " LIMIT ? OFFSET ?"
+    paging = [int(limit), int(offset or 0)] if limit else []
+    newest = "COALESCE(items.tg_date, items.created_at) DESC, items.id DESC"
+
+    if not search:
+        sql = f"SELECT * FROM items WHERE {where} ORDER BY {newest}{page}"
+        return [dict(r) for r in q(sql, params + paging).fetchall()]
+
+    def run(match):
+        sql = (f"SELECT items.* FROM items_fts JOIN items ON items.id = items_fts.rowid "
+               f"WHERE items_fts MATCH ? AND {where} "
+               f"ORDER BY bm25(items_fts, {FTS_WEIGHTS}), {newest}{page}")
+        return [dict(r) for r in q(sql, [match] + params + paging).fetchall()]
+
+    match = fts_query(search)
+    if not match:
+        return []
+    rows = run(match)
+    if not rows and " AND " in match and not q(
+            f"SELECT 1 FROM items_fts JOIN items ON items.id = items_fts.rowid WHERE items_fts MATCH ? AND {where} LIMIT 1",
+            [match] + params).fetchone():
+        # Nothing has every word: fall back to saves with any of them, still best first (on every page).
+        rows = run(fts_query(search, any_word=True))
+    return rows
 
 
 # ---------- Telegram buttons messages ----------
