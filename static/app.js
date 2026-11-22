@@ -161,7 +161,7 @@ async function api(path, opts = {}) {
   try {
     r = await fetch(base() + path, { ...opts, headers });
   } catch (e) {
-    toast("Can't reach your Box server");
+    if (!opts.quiet) toast("Can't reach your Box server");   // background polls stay quiet while offline
     throw e;
   }
   if (r.status === 401) {
@@ -348,7 +348,7 @@ async function runAi() {
 /* ---------- new-save notifications ---------- */
 async function announceNewSaves(sinceId) {
   let recent = [];
-  try { recent = await api("/api/items?view=all"); } catch (e) { return; }
+  try { recent = await api("/api/items?view=all", { quiet: true }); } catch (e) { return; }
   const added = recent.filter((it) => it.id > sinceId && !state.ownAdds.has(it.id));
   if (!added.length) return;
   added.forEach((it) => state.fresh.add(it.id));
