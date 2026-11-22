@@ -26,6 +26,10 @@ const state = {
   ownAdds: new Set(),   // ids saved from this page's Add dialog: no notification for those
   unseen: 0,            // new saves while the tab was hidden (shown in the title)
   ai: null,             // AI titles pass: { state, done, total, pending, ready, detail, ... }
+  hasMore: false,       // more saves to load for this view (paging)
+  itemsKey: "",         // the loaded items as JSON: skip redrawing when nothing changed
+  selecting: false,     // select mode: taps pick saves for bulk actions
+  selected: new Set(),
 };
 
 /* ---------- icons ---------- */
@@ -47,6 +51,8 @@ const I = {
   cloud: '<svg viewBox="0 0 24 24"><path d="M7 18.5a4 4 0 0 1-.6-8 5.5 5.5 0 0 1 10.6-1.3 4.6 4.6 0 0 1 .5 9.3z"/><path d="m9.5 13.5 2.5-2.5 2.5 2.5M12 11v5.5"/></svg>',
   search: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.4-4.4"/></svg>',
   key: '<svg viewBox="0 0 24 24"><circle cx="8" cy="15" r="3.5"/><path d="m10.5 12.5 8-8M16 7l2.5 2.5M14 9l2 2"/></svg>',
+  check: '<svg viewBox="0 0 24 24"><path d="m5.5 12.5 4 4 9-9"/></svg>',
+  download: '<svg viewBox="0 0 24 24"><path d="M12 4.5v11M7.5 11l4.5 4.5 4.5-4.5M5 19.5h14"/></svg>',
   sparkle: '<svg viewBox="0 0 24 24"><path d="M11 4.5l1.7 4.8 4.8 1.7-4.8 1.7L11 17.5l-1.7-4.8L4.5 11l4.8-1.7z"/><path d="M18 14.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z"/></svg>',
   kind: {
     article: '<svg viewBox="0 0 24 24"><path d="M7 4.5h10a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1v-13a1 1 0 0 1 1-1z"/><path d="M9 8.5h6M9 12h6M9 15.5h4"/></svg>',
@@ -348,7 +354,7 @@ async function runAi() {
 /* ---------- new-save notifications ---------- */
 async function announceNewSaves(sinceId) {
   let recent = [];
-  try { recent = await api("/api/items?view=all", { quiet: true }); } catch (e) { return; }
+  try { recent = await api("/api/items?view=all&limit=30", { quiet: true }); } catch (e) { return; }
   const added = recent.filter((it) => it.id > sinceId && !state.ownAdds.has(it.id));
   if (!added.length) return;
   added.forEach((it) => state.fresh.add(it.id));
@@ -379,21 +385,77 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
+/* Saves load a page at a time; scrolling near the end loads the next page. A reload keeps as many as are
+ * showing, and the board is only redrawn when something actually changed. */
+const PAGE = 60;
 let itemsReq = 0;
-async function loadItems() {
-  const req = ++itemsReq;
-  const p = new URLSearchParams({ view: state.view });
+function itemsQuery(limit, offset = 0) {
+  const p = new URLSearchParams({ view: state.view, limit, offset });
   if (state.collectionId) p.set("collection_id", state.collectionId);
   if (state.kind) p.set("kind", state.kind);
   if (state.q) p.set("q", state.q);
-  const items = await api("/api/items?" + p);
-  if (req !== itemsReq) return;       // a newer request superseded this one
-  state.items = items;
-  state.loaded = true;
-  renderShelf();
-  renderBoard();
-  renderHero();
+  return "/api/items?" + p;
 }
+async function loadItems({ quiet = false } = {}) {
+  const req = ++itemsReq;
+  const want = state.loaded ? Math.max(PAGE, state.items.length) : PAGE;
+  const items = await api(itemsQuery(want), { quiet });
+  if (req !== itemsReq) return;       // a newer request superseded this one
+  const key = JSON.stringify(items);
+  const changed = !state.loaded || key !== state.itemsKey;
+  state.items = items;
+  state.itemsKey = key;
+  state.hasMore = items.length === want;
+  if (state.selecting) {   // drop selections that are no longer in view
+    const ids = new Set(items.map((it) => it.id));
+    [...state.selected].forEach((id) => ids.has(id) || state.selected.delete(id));
+    renderSelectBar();
+  }
+  state.loaded = true;
+  if (changed) {
+    renderShelf();
+    renderBoard();
+  }
+  renderHero();
+  updateMore();
+}
+
+let loadingMore = false;
+async function loadMore() {
+  if (loadingMore || !state.hasMore || !state.loaded) return;
+  loadingMore = true;
+  const req = itemsReq;
+  try {
+    const page = await api(itemsQuery(PAGE, state.items.length), { quiet: true });
+    if (req !== itemsReq) return;     // the view changed meanwhile
+    const known = new Set(state.items.map((it) => it.id));
+    const fresh = page.filter((it) => !known.has(it.id));
+    const start = state.items.length;
+    state.items = state.items.concat(fresh);
+    state.itemsKey = JSON.stringify(state.items);
+    state.hasMore = page.length === PAGE;
+    const cols = $$("#board .board-col");
+    if (cols.length) fresh.forEach((it, i) => cols[(start + i) % cols.length].appendChild(tile(it)));
+    else renderBoard();
+    renderHero();
+  } catch (e) { /* try again on the next scroll */ }
+  finally {
+    loadingMore = false;
+    updateMore();
+    // The observer only fires on a change: if the end of the list is still in sight, keep going.
+    if (state.hasMore && $("#more").getBoundingClientRect().top < innerHeight + 600) setTimeout(loadMore, 50);
+  }
+}
+function updateMore() {
+  $("#more").hidden = !(state.loaded && state.hasMore && state.items.length);
+}
+new IntersectionObserver((entries) => {
+  if (entries.some((e) => e.isIntersecting)) loadMore();
+}, { rootMargin: "600px" }).observe($("#more"));
+// Also on scroll, for browsers that deliver intersection changes late.
+window.addEventListener("scroll", () => {
+  if (state.hasMore && !$("#more").hidden && $("#more").getBoundingClientRect().top < innerHeight + 600) loadMore();
+}, { passive: true });
 
 async function refresh() {
   await Promise.allSettled([loadState(), loadItems()]);
@@ -464,7 +526,7 @@ function renderHero() {
     title = "All saves";
     meta = `${plural(state.counts.all, "save")} · ${plural(state.collections.length, "collection")}`;
   }
-  if (state.q) meta = `${plural(state.items.length, "result")} for “${state.q}”`;
+  if (state.q) meta = `${state.items.length}${state.hasMore ? "+" : ""} result${state.items.length === 1 && !state.hasMore ? "" : "s"} for “${state.q}”`;
   $("#heroTitle").textContent = title;
   $("#heroMeta").textContent = meta;
 
@@ -481,13 +543,17 @@ function renderHero() {
 
   // tools
   const tools = [];
+  const canSelect = state.items.length > 0;
   if (state.view === "trash") {
     tools.push(["all", I.grid, "All saves"]);
+    if (canSelect) tools.push(["select", I.check, "Select", state.selecting ? "on" : ""]);
+    if (state.counts.trash) tools.push(["emptytrash", I.x, "Empty trash", "danger"]);
   } else {
     tools.push(["add", I.plus, "Add"]);
     tools.push(["newcol", I.folderPlus, c ? "Subcategory" : "Collection"]);
+    if (canSelect) tools.push(["select", I.check, "Select", state.selecting ? "on" : ""]);
     if (c) {
-      tools.push(["rename", I.pencil, "Rename"]);
+      tools.push(["rename", I.pencil, "Edit"]);
       tools.push(["delcol", I.trash, "Delete", "danger"]);
     } else {
       tools.push(["sync", I.sync, "Refresh"]);
@@ -520,11 +586,23 @@ $("#tools").addEventListener("click", async (e) => {
     case "newcol": openCollectionDialog({ parentId: c ? c.id : null }); break;
     case "rename": openCollectionDialog({ rename: c }); break;
     case "delcol":
-      if (!confirm(`Delete “${c.name}”? Its saves move to Unsorted.`)) return;
+      if (!await askConfirm({ title: `Delete “${c.name}”?`, ok: "Delete", danger: true,
+                              body: "Its saves and subcategories' saves move to Unsorted. The saves themselves are kept." })) return;
       await api(`/api/collections/${c.id}`, { method: "DELETE" });
       toast(`Deleted ${c.name}`);
       go({ view: "all", collectionId: c.parent ? c.parent.id : null });
       break;
+    case "select": setSelecting(!state.selecting); break;
+    case "emptytrash": {
+      const n = state.counts.trash;
+      if (!await askConfirm({ title: "Empty the trash?", ok: `Delete ${plural(n, "item")}`, danger: true,
+                              body: "Everything in the trash is deleted for good, with its pictures and files. This can't be undone." })) return;
+      const r = await api("/api/trash", { method: "DELETE" });
+      setSelecting(false);
+      toast(`Deleted ${plural(r.count, "item")}`);
+      refresh();
+      break;
+    }
     case "sync": await refresh(); toast("Up to date"); break;
     case "ai": await runAi(); break;
     case "menu": openDrawer(); break;
@@ -599,7 +677,7 @@ function renderBoard() {
 }
 
 function emptyState() {
-  let h = "Nothing here yet", p = "Share a post to your <b>Box</b> chat on Telegram, or press <b>Add</b> to save a link.";
+  let h = "Nothing here yet", p = "Share a post to your <b>Box</b> chat on Telegram, or press <b>Add</b> to save a link or a note.";
   if (state.q) { h = "No matches"; p = `Nothing in this view matches “${esc(state.q)}”.`; }
   else if (state.kind) { h = `No ${KIND_LABEL[state.kind].toLowerCase()}s here`; p = "Try another filter."; }
   else if (state.view === "trash") { h = "Trash is empty"; p = "Deleted saves wait here until you remove them for good."; }
@@ -610,7 +688,9 @@ function emptyState() {
 
 function tile(it) {
   const el = document.createElement("article");
-  el.className = "tile" + (it.trashed ? " trashed" : "") + (state.fresh.has(it.id) ? " fresh" : "");
+  el.className = "tile" + (it.trashed ? " trashed" : "") + (state.fresh.has(it.id) ? " fresh" : "") +
+    (state.selected.has(it.id) ? " selected" : "");
+  el.dataset.id = it.id;
   el.tabIndex = 0;
   const host = it.url ? hostOf(it.url) : "";
   const site = it.site_name || host;
@@ -665,20 +745,109 @@ function tile(it) {
     act(I.move, "Move", () => openMove(it));
     act(I.trash, "Move to trash", () => setTrashed(it, true), "danger");
   }
-  el.addEventListener("click", () => openItem(it));
-  el.addEventListener("keydown", (e) => { if (e.key === "Enter") openItem(it); });
+  el.insertAdjacentHTML("afterbegin", `<span class="sel-mark" aria-hidden="true">${I.check}</span>`);
+  const activate = () => (state.selecting ? toggleSelected(it.id, el) : openItem(it));
+  el.addEventListener("click", activate);
+  el.addEventListener("keydown", (e) => { if (e.key === "Enter" || (e.key === " " && state.selecting)) { e.preventDefault(); activate(); } });
   return el;
+}
+
+/* ---------- select mode (bulk actions) ---------- */
+function setSelecting(on) {
+  state.selecting = on;
+  state.selected.clear();
+  document.documentElement.classList.toggle("selecting", on);
+  $$(".tile.selected").forEach((t) => t.classList.remove("selected"));
+  renderSelectBar();
+  renderHero();
+}
+function toggleSelected(id, el) {
+  state.selected.has(id) ? state.selected.delete(id) : state.selected.add(id);
+  el.classList.toggle("selected", state.selected.has(id));
+  renderSelectBar();
+}
+function renderSelectBar() {
+  const bar = $("#selectBar");
+  bar.hidden = !state.selecting;
+  if (!state.selecting) return;
+  const n = state.selected.size;
+  $("#selCount").textContent = n ? `${n} selected` : "Tap saves to select";
+  const acts = state.view === "trash"
+    ? [["restore", I.restore, "Restore", "outline"], ["delete", I.x, "Delete", "danger"]]
+    : [["move", I.move, "Move", "outline"], ["trash", I.trash, "Trash", "danger"]];
+  if (state.items.length) acts.unshift(["all", I.check, n === state.items.length ? "None" : "All", "ghost"]);
+  $("#selActions").innerHTML = acts.map(([a, icon, label, cls]) =>
+    `<button class="btn ${cls}" data-bulk="${a}" ${a !== "all" && !n ? "disabled" : ""} title="${label}">${icon}<span>${label}</span></button>`).join("");
+}
+$("#selCancel").addEventListener("click", () => setSelecting(false));
+$("#selActions").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-bulk]");
+  if (!b) return;
+  const ids = [...state.selected];
+  const n = ids.length;
+  switch (b.dataset.bulk) {
+    case "all":
+      if (n === state.items.length) state.selected.clear();
+      else state.items.forEach((it) => state.selected.add(it.id));
+      $$(".tile").forEach((t) => t.classList.toggle("selected", state.selected.has(+t.dataset.id)));
+      renderSelectBar();
+      return;
+    case "move":
+      openMove({ ids });
+      return;
+    case "trash":
+      await api("/api/items/bulk", jsonBody("POST", { ids, action: "trash" }));
+      setSelecting(false);
+      toast(`Moved ${plural(n, "save")} to trash`, { action: "Undo", ms: 7000, onAction: async () => {
+        await api("/api/items/bulk", jsonBody("POST", { ids, action: "restore" }));
+        toast("Restored");
+        refresh();
+      } });
+      break;
+    case "restore":
+      await api("/api/items/bulk", jsonBody("POST", { ids, action: "restore" }));
+      setSelecting(false);
+      toast(`Restored ${plural(n, "save")}`);
+      break;
+    case "delete":
+      if (!await askConfirm({ title: `Delete ${plural(n, "item")} for good?`, ok: "Delete", danger: true,
+                              body: "Their pictures and files are deleted too. This can't be undone." })) return;
+      await api("/api/items/bulk", jsonBody("POST", { ids, action: "delete" }));
+      setSelecting(false);
+      toast(`Deleted ${plural(n, "item")}`);
+      break;
+  }
+  refresh();
+});
+
+/* ---------- confirm sheet ---------- */
+function askConfirm({ title, body = "", ok = "OK", danger = false }) {
+  const d = $("#dlgConfirm");
+  $("#confirmTitle").textContent = title;
+  $("#confirmBody").textContent = body;
+  $("#confirmOk").textContent = ok;
+  $("#confirmOk").className = "btn " + (danger ? "danger-solid" : "primary");
+  d.returnValue = "";
+  d.showModal();
+  return new Promise((resolve) => d.addEventListener("close", () => resolve(d.returnValue === "ok"), { once: true }));
 }
 
 /* ---------- item actions ---------- */
 async function setTrashed(it, trashed) {
   await api(`/api/items/${it.id}`, jsonBody("PATCH", { trashed }));
-  toast(trashed ? "Moved to trash" : "Restored");
   closeItem();
   refresh();
+  if (trashed) {
+    toast("Moved to trash", { action: "Undo", ms: 7000, onAction: async () => {
+      await api(`/api/items/${it.id}`, jsonBody("PATCH", { trashed: false }));
+      toast("Restored");
+      refresh();
+    } });
+  } else toast("Restored");
 }
 async function deleteForever(it) {
-  if (!confirm("Delete this save permanently? This cannot be undone.")) return;
+  if (!await askConfirm({ title: "Delete this save for good?", ok: "Delete", danger: true,
+                          body: "Its picture or file is deleted too. This can't be undone." })) return;
   await api(`/api/items/${it.id}`, { method: "DELETE" });
   toast("Deleted");
   closeItem();
@@ -703,6 +872,7 @@ function openItem(it) {
     : (it.summary || it.description || (it.text && it.text !== it.url ? it.text : "") || "");
   $("#itemDesc").classList.toggle("note-text", it.kind === "note");
   renderItemAi(it);
+  renderItemMore(it);
   openItem.current = it;
   const colBtn = $("#itemCol");
   colBtn.innerHTML = `${I.folder}${esc(it.collection_path || "Unsorted")}`;
@@ -748,6 +918,39 @@ function renderItemAi(it) {
   }
 }
 
+// Secondary actions for a saved link: fetch its preview again, or write its AI title and description again.
+function renderItemMore(it) {
+  const box = $("#itemMore");
+  box.innerHTML = "";
+  if (!it.url || it.trashed) return;
+  const add = (icon, label, busyLabel, fn) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.innerHTML = `${icon}<span>${label}</span>`;
+    b.addEventListener("click", async () => {
+      b.disabled = true;
+      b.querySelector("span").textContent = busyLabel;
+      try { await fn(); } catch (e) { /* api() showed the error */ }
+      finally { if (b.isConnected) { b.disabled = false; b.querySelector("span").textContent = label; } }
+    });
+    box.appendChild(b);
+  };
+  add(I.sync, "Refresh preview", "Refreshing…", async () => {
+    const saved = await api(`/api/items/${it.id}/refresh`, { method: "POST" });
+    itemChanged(saved);
+    toast("Preview refreshed");
+  });
+  add(I.sparkle, it.summary ? "Describe again" : "Describe with AI", "Describing…", async () => {
+    if (state.ai && !state.ai.ready) {
+      toast("AI titles aren't set up on the server yet", { sub: "On the server run: python -m box ai-key", ms: 7000 });
+      return;
+    }
+    const saved = await api(`/api/items/${it.id}/redo-ai`, { method: "POST" });
+    itemChanged(saved);
+    toast(saved.ai_status === "no_info" ? "Not enough information to describe it" : "Described");
+  });
+}
+
 // Replace a save in the list and in the open detail sheet after the server changed it.
 function itemChanged(saved) {
   const i = state.items.findIndex((x) => x.id === saved.id);
@@ -784,38 +987,50 @@ $("#itemTitleInput").addEventListener("keydown", (e) => {
 });
 
 /* ---------- dialogs ---------- */
-function fillCollectionSelect(sel, emptyLabel, selected) {
-  sel.innerHTML = `<option value="">${emptyLabel}</option>` + flatCollections().map((c) =>
+function fillCollectionSelect(sel, emptyLabel, selected, exclude = new Set()) {
+  sel.innerHTML = `<option value="">${emptyLabel}</option>` + flatCollections().filter((c) => !exclude.has(c.id)).map((c) =>
     `<option value="${c.id}">${" ".repeat(c.depth)}${esc(c.name)}</option>`).join("");
   sel.value = selected ?? "";
 }
 
-function openAdd() {
+// One box for both: a single link (with or without https://) is saved as a link, anything else as a note.
+const LINK_RE = /^(https?:\/\/)?[\w-]+(\.[\w-]+)+(:\d+)?(\/\S*)?$/i;
+function openAdd(prefill = "") {
   fillCollectionSelect($("#addParent"), "Unsorted", state.collectionId);
-  $("#addUrl").value = "";
+  $("#addText").value = prefill;
   $("#dlgAdd").showModal();
 }
-$("#addBtn").addEventListener("click", openAdd);
+$("#addBtn").addEventListener("click", () => openAdd());
 $("#dlgAdd").addEventListener("close", async () => {
   if ($("#dlgAdd").returnValue !== "ok") return;
-  const url = $("#addUrl").value.trim();
-  if (!url) return;
+  const value = $("#addText").value.trim();
+  if (!value) return;
+  const isLink = LINK_RE.test(value);
   toast("Saving…");
   const saved = await api("/api/items", jsonBody("POST", {
-    url, collection_id: $("#addParent").value ? +$("#addParent").value : null }));
+    ...(isLink ? { url: value } : { text: value }),
+    collection_id: $("#addParent").value ? +$("#addParent").value : null }));
   if (saved?.id) state.ownAdds.add(saved.id);
-  toast("Saved");
+  toast(isLink ? "Link saved" : "Note saved");
   refresh();
+});
+// Enter in the box saves (Shift+Enter for a new line in a note).
+$("#addText").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+    e.preventDefault();
+    if ($("#addText").value.trim()) $("#dlgAdd").close("ok");
+  }
 });
 
 let colDialog = {};
 function openCollectionDialog({ parentId = null, rename = null } = {}) {
   colDialog = { rename };
-  $("#colDlgTitle").textContent = rename ? "Rename collection" : (parentId ? "New subcategory" : "New collection");
+  $("#colDlgTitle").textContent = rename ? "Edit collection" : (parentId ? "New subcategory" : "New collection");
   $("#colOk").textContent = rename ? "Save" : "Create";
   $("#colName").value = rename ? rename.name : "";
-  $("#colParentField").hidden = !!rename;
-  fillCollectionSelect($("#colParent"), "Top level", parentId);
+  // Editing: "Inside" moves the collection; it can't go inside itself or its own subcategories.
+  const exclude = rename ? new Set(descendantIds(rename)) : new Set();
+  fillCollectionSelect($("#colParent"), "Top level", rename ? (rename.parent ? rename.parent.id : null) : parentId, exclude);
   $("#dlgCollection").showModal();
   $("#colName").select();
 }
@@ -824,8 +1039,11 @@ $("#dlgCollection").addEventListener("close", async () => {
   const name = $("#colName").value.trim();
   if (!name) return;
   if (colDialog.rename) {
-    await api(`/api/collections/${colDialog.rename.id}`, jsonBody("PATCH", { name }));
-    toast("Renamed");
+    const c = colDialog.rename;
+    const parentId = $("#colParent").value ? +$("#colParent").value : null;
+    const moved = parentId !== (c.parent ? c.parent.id : null);
+    await api(`/api/collections/${c.id}`, jsonBody("PATCH", { name, set_parent: moved, parent_id: parentId }));
+    toast(moved ? `Moved ${name}` : "Saved");
   } else {
     await api("/api/collections", jsonBody("POST", {
       name, parent_id: $("#colParent").value ? +$("#colParent").value : null }));
@@ -834,18 +1052,26 @@ $("#dlgCollection").addEventListener("close", async () => {
   refresh();
 });
 
+// it: one save, or { ids: [...] } for the saves picked in select mode.
 function openMove(it) {
   const list = $("#moveList");
   list.innerHTML = "";
+  const many = Array.isArray(it.ids);
+  $("#dlgMove h2").textContent = many ? `Move ${plural(it.ids.length, "save")} to…` : "Move to…";
   const add = (label, id, depth) => {
     const b = document.createElement("button");
     b.style.paddingLeft = `${12 + depth * 18}px`;
     b.innerHTML = (id === null ? I.inbox : I.folder) + esc(label);
-    if (id === it.collection_id) b.classList.add("current");
+    if (!many && id === it.collection_id) b.classList.add("current");
     b.addEventListener("click", async () => {
-      await api(`/api/items/${it.id}`, jsonBody("PATCH", { set_collection: true, collection_id: id }));
+      if (many) {
+        await api("/api/items/bulk", jsonBody("POST", { ids: it.ids, action: "move", collection_id: id }));
+        setSelecting(false);
+      } else {
+        await api(`/api/items/${it.id}`, jsonBody("PATCH", { set_collection: true, collection_id: id }));
+      }
       $("#dlgMove").close();
-      toast(id === null ? "Moved to Unsorted" : `Moved to ${label}`);
+      toast((many ? `Moved ${plural(it.ids.length, "save")} to ` : "Moved to ") + (id === null ? "Unsorted" : label));
       refresh();
     });
     list.appendChild(b);
@@ -942,15 +1168,32 @@ $("#themeBtn").addEventListener("click", () => {
   store.set("box.theme", next);
   syncThemeUI();
 });
-$("#signOutBtn").addEventListener("click", () => {
-  if (!confirm("Sign out of Box on this device?")) return;
+$("#signOutBtn").addEventListener("click", async () => {
+  if (!await askConfirm({ title: "Sign out of Box on this device?", ok: "Sign out",
+                          body: "You can sign in again with a code from your Telegram chat." })) return;
   store.del("box.token");
   closeDrawer();
+  setSelecting(false);
   showSignIn();
+});
+
+// Export: everything Box knows (not the pictures and files themselves) as a JSON file.
+$("#exportBtn").addEventListener("click", async () => {
+  const data = await api("/api/export");
+  const blob = new Blob([JSON.stringify(data, null, 1)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `box-export-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  toast(`Exported ${plural(data.items.length, "item")}`);
 });
 
 /* ---------- navigation ---------- */
 function go({ view, collectionId }) {
+  if (state.selecting) setSelecting(false);
   state.view = view;
   state.collectionId = collectionId;
   const hash = collectionId ? `#c/${collectionId}` : (view === "all" ? "" : `#${view}`);
@@ -973,7 +1216,9 @@ function fromHash() {
 function onLocationChange() {
   const next = fromHash();
   if (next.view === state.view && next.collectionId === state.collectionId) return;
+  if (state.selecting) setSelecting(false);
   Object.assign(state, next);
+  state.loaded = false;
   closeDrawer();
   renderHero();
   renderDrawer();
@@ -1007,7 +1252,24 @@ document.addEventListener("keydown", (e) => {
     $("#searchInput").focus();
   }
   if (e.key === "Escape" && $("#drawer").classList.contains("open")) closeDrawer();
+  else if (e.key === "Escape" && state.selecting && !document.querySelector("dialog[open]")) setSelecting(false);
 });
+
+// Shared from another app through the phone's share menu (Box installed as an app): open Add, filled in.
+function takeShared() {
+  const p = new URLSearchParams(location.search);
+  if (!["share_url", "share_text", "share_title"].some((k) => p.has(k))) return null;
+  const url = p.get("share_url") || "";
+  const text = p.get("share_text") || "";
+  const inText = text.match(/https?:\/\/\S+/);
+  history.replaceState(null, "", location.pathname + location.hash);
+  return url || (inText ? inText[0] : "") || text || p.get("share_title") || "";
+}
+
+if ("serviceWorker" in navigator && location.protocol === "https:") {
+  // At the site root (next to index.html) so it covers the whole app; lets the page be installed.
+  navigator.serviceWorker.register(new URL("sw.js", location.href.split("#")[0].replace(/[^/]*$/, ""))).catch(() => {});
+}
 
 function showSkeleton() {
   const board = $("#board");
@@ -1031,18 +1293,23 @@ window.addEventListener("resize", () => {
   matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", syncThemeUI);
   lastCols = columnCount();
   showSkeleton();
+  const shared = takeShared();
   redeemLoginLink().then((result) => {
     if (result === false) return;   // the sign-in screen is showing why the link failed
     Object.assign(state, fromHash());
-    if (STATIC_HOST && (!SERVER || !token())) { showSignIn(); return; }
+    if (STATIC_HOST && (!SERVER || !token())) {
+      showSignIn(shared ? "Sign in first, then share it again." : "");
+      return;
+    }
     renderHero();
     refresh();
+    if (shared) openAdd(shared);
   });
   const pollState = () => {
     if (!signedOut) loadState().catch(() => {});
     setTimeout(pollState, document.hidden ? 30000 : 10000);   // new saves, status dot, counts
   };
   setTimeout(pollState, 10000);
-  setInterval(() => { if (!document.hidden && !signedOut && !document.querySelector("dialog[open]")) loadItems(); }, 30000);
+  setInterval(() => { if (!document.hidden && !signedOut && !document.querySelector("dialog[open]")) loadItems({ quiet: true }).catch(() => {}); }, 30000);
   document.addEventListener("visibilitychange", () => { if (!document.hidden && !signedOut) refresh(); });
 })();

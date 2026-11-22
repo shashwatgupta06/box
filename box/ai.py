@@ -239,6 +239,28 @@ class AiPass:
         self._task = asyncio.create_task(self.run(items))
         return True
 
+    async def redo_one(self, item_id):
+        """Write the title and description of one save again (the pass's rules apply). Returns an error message
+        or None."""
+        import anthropic
+        if not self.key():
+            return "No Claude API key on the server yet. On the server run: python -m box ai-key"
+        item = db.get_item(item_id)
+        if not item or not item["url"]:
+            return "Only saved links can be described."
+        client = anthropic.AsyncAnthropic(api_key=self.key(), max_retries=3, timeout=120)
+        try:
+            result = await describe(client, await gather(dict(item)))
+        except FatalAPIError as e:
+            return str(e)
+        except Exception as e:
+            log.warning("redo failed for item %s: %s", item_id, e)
+            return "Couldn't describe it right now. Try again in a minute."
+        finally:
+            await client.close()
+        apply_result(item_id, result)
+        return None
+
     async def run(self, items):
         import anthropic
         if not items:

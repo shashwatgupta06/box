@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from . import auth, db
 from .config import ROOT, MEDIA_DIR, load_config, ensure_dirs, telegram_configured
-from .metadata import classify_url, enrich_item
+from .metadata import classify_url, enrich_item, refresh_preview
 from .sync import SyncEngine
 from .backup import BackupEngine
 from .ai import AiPass
@@ -78,6 +78,12 @@ if _cfg.get("cors_origins"):
 @app.get("/")
 def index():
     return FileResponse(ROOT / "static" / "index.html")
+
+
+@app.get("/sw.js")
+def service_worker():
+    """At the site root so it may cover the whole app (needed to install it as an app)."""
+    return FileResponse(ROOT / "static" / "sw.js", media_type="text/javascript")
 
 
 @app.get("/media/{name}")
@@ -178,25 +184,91 @@ async def ai_run():   # async: the pass is started as a task on the server's eve
 
 @app.get("/api/items")
 def items(view: str = "all", collection_id: int | None = None,
-          kind: str | None = None, q: str | None = None):
-    rows = db.list_items(view=view, collection_id=collection_id, kind=kind, search=q)
+          kind: str | None = None, q: str | None = None, limit: int | None = None, offset: int = 0):
+    limit = min(limit, 500) if limit else None
+    rows = db.list_items(view=view, collection_id=collection_id, kind=kind, search=q, limit=limit, offset=offset)
     return [_serialize(r) for r in rows]
 
 
 class NewItem(BaseModel):
-    url: str
+    url: str | None = None          # a link to save ...
+    text: str | None = None         # ... or a note
     collection_id: int | None = None
 
 
 @app.post("/api/items")
 async def add_item(body: NewItem):
-    url = body.url.strip()
-    if not url.startswith(("http://", "https://")):
-        url = "https://" + url
-    item_id = db.create_item({"url": url, "kind": classify_url(url),
-                              "collection_id": body.collection_id,
-                              "tg_date": None})
-    await enrich_item(item_id, url)
+    url = (body.url or "").strip()
+    text = (body.text or "").strip()
+    if url:
+        if not url.startswith(("http://", "https://")):
+            url = "https://" + url
+        item_id = db.create_item({"url": url, "kind": classify_url(url),
+                                  "collection_id": body.collection_id, "tg_date": None})
+        await enrich_item(item_id, url)
+    elif text:
+        item_id = db.create_item({"kind": "note", "text": text[:20000], "title": " ".join(text.split())[:120],
+                                  "collection_id": body.collection_id, "tg_date": None})
+    else:
+        raise HTTPException(400, "Nothing to save: add a link or some text.")
+    return _serialize(db.get_item(item_id))
+
+
+@app.get("/api/export")
+def export():
+    """Everything in Box as one JSON file (the pictures and files themselves are not included)."""
+    return JSONResponse(db.export_data(),
+                        headers={"Content-Disposition": 'attachment; filename="box-export.json"'})
+
+
+class Bulk(BaseModel):
+    ids: list[int]
+    action: str                     # move | trash | restore | delete
+    collection_id: int | None = None
+
+
+@app.post("/api/items/bulk")
+def bulk(body: Bulk):
+    ids = [i for i in body.ids[:1000] if db.get_item(i)]
+    if body.action == "move":
+        if body.collection_id is not None and not db.get_collection(body.collection_id):
+            raise HTTPException(404, "That collection no longer exists.")
+        for i in ids:
+            db.update_item(i, collection_id=body.collection_id)
+    elif body.action in ("trash", "restore"):
+        for i in ids:
+            db.update_item(i, trashed=1 if body.action == "trash" else 0)
+    elif body.action == "delete":
+        for i in ids:
+            db.delete_item(i)
+    else:
+        raise HTTPException(400, "Unknown action.")
+    return {"ok": True, "count": len(ids)}
+
+
+@app.delete("/api/trash")
+def empty_trash():
+    return {"ok": True, "count": db.empty_trash()}
+
+
+@app.post("/api/items/{item_id}/refresh")
+async def refresh_item_preview(item_id: int):
+    """Fetch the link's preview (description, picture) again."""
+    if not db.get_item(item_id):
+        raise HTTPException(404)
+    if not await refresh_preview(item_id):
+        raise HTTPException(502, "The site gave nothing new for this link.")
+    return _serialize(db.get_item(item_id))
+
+
+@app.post("/api/items/{item_id}/redo-ai")
+async def redo_ai(item_id: int):
+    """Write this save's AI title and description again."""
+    if not db.get_item(item_id):
+        raise HTTPException(404)
+    err = await ai_pass.redo_one(item_id)
+    if err:
+        raise HTTPException(409, err)
     return _serialize(db.get_item(item_id))
 
 
@@ -255,12 +327,28 @@ def add_collection(body: NewCollection):
 
 
 class CollectionPatch(BaseModel):
-    name: str
+    name: str | None = None
+    parent_id: int | None = None
+    set_parent: bool = False        # distinguishes "move to the top level" from "no change"
 
 
 @app.patch("/api/collections/{cid}")
 def patch_collection(cid: int, body: CollectionPatch):
-    db.rename_collection(cid, body.name)
+    if not db.get_collection(cid):
+        raise HTTPException(404)
+    if body.set_parent:
+        err = db.move_collection(cid, body.parent_id)
+        if err:
+            raise HTTPException(409, err)
+    if body.name is not None:
+        name = body.name.strip()
+        if not name:
+            raise HTTPException(400, "The name can't be empty.")
+        col = db.get_collection(cid)
+        clash = db.find_collection(name, col["parent_id"])
+        if clash and clash["id"] != cid:
+            raise HTTPException(409, f"There is already a collection called {name} there.")
+        db.rename_collection(cid, name)
     return {"ok": True}
 
 

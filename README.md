@@ -37,6 +37,12 @@ backups are connected.</sub>
    you can move it from the web UI later.
 5. Rename any save from its detail view in the web UI (the pencil next to the title).
 
+In the web UI you can also save a link or a note with **Add**, pick several saves with **Select** to move,
+trash or restore them together, move a collection inside another (**Edit**), undo a trash, empty the trash, refresh
+a link's preview, and download everything with **Export** (in the menu). Editing a message in Telegram (to fix a
+label, a note or a link) updates Box while it is running. Install the page as an app from the browser's menu
+("Add to Home screen"); on Android it then appears in the share menu, so a link can go straight to Box.
+
 ### AI titles and descriptions (optional, Claude API)
 
 The **AI titles** button in the web UI gives every saved link a short title that says what it is, and a 3–4

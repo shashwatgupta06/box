@@ -31,6 +31,7 @@ jobs:
         run: |
           mkdir -p _site/static
           cp static/index.html _site/index.html
+          cp static/sw.js _site/sw.js          # at the site root, so it covers the whole app
           cp -r static/. _site/static/
           printf 'window.BOX_SERVER = "%s";\n' "$BOX_SERVER" > _site/static/config.js
           touch _site/.nojekyll

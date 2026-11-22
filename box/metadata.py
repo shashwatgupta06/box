@@ -212,6 +212,36 @@ async def download_image(url, dest_name, max_mb=10):
         return None
 
 
+async def refresh_preview(item_id):
+    """Fetch a saved link's preview again and replace the stored one. A title the user or the AI set is kept.
+    Returns False when nothing usable came back."""
+    item = db.get_item(item_id)
+    if not item or not item["url"]:
+        return False
+    meta = await fetch_metadata(item["url"])
+    meta["title"] = _clean_title(meta.get("title"))
+    fields = {}
+    if meta.get("title") and not item["custom_title"] and not item["ai_title"]:
+        fields["title"] = meta["title"]
+    if meta.get("description"):
+        fields["description"] = meta["description"]
+    if meta.get("site_name"):
+        fields["site_name"] = meta["site_name"]
+    own_photo = item["image_path"] and not item["image_path"].startswith(("og_", "tgprev_"))
+    if meta.get("image_url") and not own_photo:    # never replace a photo the user sent
+        fname = await download_image(meta["image_url"], f"og_{item_id}_r{abs(hash(meta['image_url'])) % 10**6}")
+        if fname:
+            fields["image_url"] = meta["image_url"]
+            fields["image_path"] = fname
+    if not fields:
+        return False
+    old_image = item["image_path"]
+    db.update_item(item_id, **fields)
+    if fields.get("image_path") and old_image and old_image != fields["image_path"]:
+        db._remove_media([old_image])   # the old preview picture, unless something else uses it
+    return True
+
+
 async def enrich_item(item_id, url, preview=None):
     """Fill in title/description/site/preview image for a saved link.
 

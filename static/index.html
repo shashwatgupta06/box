@@ -6,6 +6,8 @@
 <meta name="theme-color" content="#fbf6f6">
 <title>Box</title>
 <link rel="stylesheet" href="static/style.css">
+<link rel="manifest" href="static/manifest.webmanifest">
+<link rel="apple-touch-icon" href="static/apple-touch-icon.png">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect x='8' y='8' width='84' height='84' rx='26' fill='%231c1617'/><path d='M30 40l20-11 20 11v22L50 73 30 62z' fill='none' stroke='%23fbf6f6' stroke-width='6' stroke-linejoin='round'/><path d='M30 40l20 11 20-11M50 51v22' fill='none' stroke='%23fbf6f6' stroke-width='6' stroke-linejoin='round'/></svg>">
 <script>
   // Apply the saved or system theme before first paint.
@@ -62,7 +64,15 @@
   <section class="shelf" id="shelf" aria-label="Collections"></section>
   <h2 class="section-label" id="boardLabel" hidden>Latest saves</h2>
   <section class="board" id="board" aria-live="polite"></section>
+  <div class="more" id="more" hidden>Loading more…</div>
 </main>
+
+<!-- Selection bar (select mode) -->
+<div class="select-bar glass" id="selectBar" hidden>
+  <span class="sel-count" id="selCount">0 selected</span>
+  <div class="sel-actions" id="selActions"></div>
+  <button class="btn ghost" id="selCancel">Done</button>
+</div>
 
 <!-- Collections drawer -->
 <div class="scrim" id="scrim"></div>
@@ -81,6 +91,7 @@
     <button class="status-row clickable" id="backupRow" title="Back up now"><span class="dot"></span><span class="txt">Backup</span></button>
     <div class="foot-actions">
       <button class="chip-btn" id="themeBtn">Dark mode</button>
+      <button class="chip-btn" id="exportBtn" title="Download everything in Box as a JSON file">Export</button>
       <button class="chip-btn" id="signOutBtn" hidden>Sign out</button>
     </div>
   </div>
@@ -104,6 +115,7 @@
     </form>
     <div class="item-ai" id="itemAi"></div>
     <p class="item-desc" id="itemDesc"></p>
+    <div class="item-more" id="itemMore"></div>
     <button class="item-col" id="itemCol"></button>
     <div class="item-actions" id="itemActions"></div>
   </div>
@@ -112,11 +124,11 @@
   </button>
 </dialog>
 
-<!-- Add a link -->
+<!-- Add a link or note -->
 <dialog id="dlgAdd" class="sheet">
   <form method="dialog">
-    <h2>Save a link</h2>
-    <label class="field">Link<input type="url" id="addUrl" required placeholder="https://…" autocomplete="off"></label>
+    <h2>Save to Box</h2>
+    <label class="field">Link or note<textarea id="addText" rows="3" required placeholder="Paste a link, or write a note" autocomplete="off"></textarea></label>
     <label class="field">Collection<select id="addParent"></select></label>
     <div class="sheet-actions">
       <button value="cancel" class="btn ghost" formnovalidate>Cancel</button>
@@ -143,6 +155,18 @@
   <h2>Move to…</h2>
   <div class="move-list" id="moveList"></div>
   <div class="sheet-actions"><button class="btn ghost" data-close>Cancel</button></div>
+</dialog>
+
+<!-- Confirm (replaces the browser's own confirm()) -->
+<dialog id="dlgConfirm" class="sheet sheet-confirm">
+  <form method="dialog">
+    <h2 id="confirmTitle"></h2>
+    <p class="sheet-note" id="confirmBody"></p>
+    <div class="sheet-actions">
+      <button value="cancel" class="btn ghost" formnovalidate>Cancel</button>
+      <button value="ok" class="btn primary" id="confirmOk">OK</button>
+    </div>
+  </form>
 </dialog>
 
 <div class="toast" id="toast" role="status"></div>

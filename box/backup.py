@@ -57,14 +57,7 @@ def _snapshot_sqlite(dest: Path):
 
 
 def _export_json(dest: Path):
-    cols = [dict(r) for r in db.q("SELECT * FROM collections ORDER BY id").fetchall()]
-    items = [dict(r) for r in db.q("SELECT * FROM items ORDER BY id").fetchall()]
-    for it in items:
-        it["collection_path"] = db.collection_path(it["collection_id"]) if it["collection_id"] else None
-    dest.write_text(json.dumps(
-        {"exported_at": datetime.now().astimezone().isoformat(),
-         "collections": cols, "items": items},
-        ensure_ascii=False, indent=1))
+    dest.write_text(json.dumps(db.export_data(), ensure_ascii=False, indent=1))
 
 
 def _prune_snapshots(keep):

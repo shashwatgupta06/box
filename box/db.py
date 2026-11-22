@@ -1,7 +1,9 @@
 import sqlite3
 import threading
+from datetime import datetime
+from pathlib import Path
 
-from .config import DATA_DIR
+from .config import DATA_DIR, MEDIA_DIR
 
 DB_PATH = DATA_DIR / "box.db"
 
@@ -175,6 +177,28 @@ def rename_collection(cid, name):
     q("UPDATE collections SET name=? WHERE id=?", (name.strip(), cid))
 
 
+def get_collection(cid):
+    return q("SELECT * FROM collections WHERE id=?", (cid,)).fetchone()
+
+
+def move_collection(cid, parent_id):
+    """Put a collection (with everything inside it) under another one, or at the top level (None).
+    Returns an error message, or None when done."""
+    col = get_collection(cid)
+    if not col:
+        return "That collection no longer exists."
+    if parent_id is not None:
+        if not get_collection(parent_id):
+            return "The destination collection no longer exists."
+        if parent_id in collection_descendants(cid):
+            return "A collection can't go inside itself or one of its own subcategories."
+    clash = find_collection(col["name"], parent_id)
+    if clash and clash["id"] != cid:
+        return f"There is already a collection called {col['name']} there."
+    q("UPDATE collections SET parent_id=? WHERE id=?", (parent_id, cid))
+    return None
+
+
 def delete_collection(cid):
     for did in collection_descendants(cid):
         q("UPDATE items SET collection_id=NULL WHERE collection_id=?", (did,))
@@ -219,7 +243,43 @@ def prev_item_before(chat_id, message_id):
 
 
 def delete_item(item_id):
+    """Delete a save for good, with its picture and file unless another save uses them."""
+    item = get_item(item_id)
     q("DELETE FROM items WHERE id=?", (item_id,))
+    if item:
+        _remove_media([item["image_path"], item["file_path"]])
+
+
+def empty_trash():
+    rows = q("SELECT id, image_path, file_path FROM items WHERE trashed=1").fetchall()
+    q("DELETE FROM items WHERE trashed=1")
+    _remove_media([n for r in rows for n in (r["image_path"], r["file_path"])])
+    return len(rows)
+
+
+def _remove_media(names):
+    for name in {n for n in names if n}:
+        if q("SELECT 1 FROM items WHERE image_path=? OR file_path=? LIMIT 1", (name, name)).fetchone():
+            continue
+        try:
+            (MEDIA_DIR / Path(name).name).unlink()
+        except FileNotFoundError:
+            pass
+
+
+def get_items(ids):
+    if not ids:
+        return []
+    return [dict(r) for r in q(f"SELECT * FROM items WHERE id IN ({','.join('?' * len(ids))})", list(ids)).fetchall()]
+
+
+def export_data():
+    """Everything Box knows (not the media files), as one JSON-ready dict."""
+    cols = [dict(r) for r in q("SELECT * FROM collections ORDER BY id").fetchall()]
+    items = [dict(r) for r in q("SELECT * FROM items ORDER BY id").fetchall()]
+    for it in items:
+        it["collection_path"] = collection_path(it["collection_id"]) if it["collection_id"] else None
+    return {"exported_at": datetime.now().astimezone().isoformat(), "collections": cols, "items": items}
 
 
 def latest_item_id():
@@ -249,7 +309,7 @@ def ai_pending_items():
     return [dict(r) for r in q(f"SELECT * FROM items WHERE {AI_PENDING_SQL} ORDER BY id").fetchall()]
 
 
-def list_items(view="all", collection_id=None, kind=None, search=None):
+def list_items(view="all", collection_id=None, kind=None, search=None, limit=None, offset=0):
     sql = "SELECT * FROM items WHERE trashed=?"
     params = [1 if view == "trash" else 0]
     if view == "unsorted":
@@ -267,6 +327,9 @@ def list_items(view="all", collection_id=None, kind=None, search=None):
                 " OR ai_summary LIKE ?)")
         params.extend([like] * 6)
     sql += " ORDER BY COALESCE(tg_date, created_at) DESC, id DESC"
+    if limit:
+        sql += " LIMIT ? OFFSET ?"
+        params.extend([int(limit), int(offset or 0)])
     return [dict(r) for r in q(sql, params).fetchall()]
 
 

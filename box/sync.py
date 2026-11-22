@@ -21,7 +21,7 @@ from telethon.tl.types import MessageMediaDocument, MessageMediaPhoto, MessageMe
 
 from . import auth, db
 from .config import DATA_DIR, MEDIA_DIR
-from .metadata import classify_url, enrich_item
+from .metadata import classify_url, enrich_item, refresh_preview
 from .picker import Picker, is_bot_message
 
 log = logging.getLogger("box.sync")
@@ -74,6 +74,7 @@ class SyncEngine:
             await self.picker.start(self.chat)
             self.client.add_event_handler(self._on_new_message,
                                           events.NewMessage(chats=self.chat))
+            self.client.add_event_handler(self._on_edited, events.MessageEdited(chats=self.chat))
             while True:
                 try:
                     await self.catch_up()
@@ -119,6 +120,40 @@ class SyncEngine:
             self.status["last_sync"] = _now_iso()
         except Exception:
             log.exception("failed to process live message")
+
+    async def _on_edited(self, event):
+        try:
+            await self.process_edit(event.message)
+        except Exception:
+            log.exception("failed to process an edited message")
+
+    async def process_edit(self, msg):
+        """A message was edited in Telegram: a corrected label is applied again, a note's text and a save's link
+        are updated. (Only edits made while Box is running are seen.)"""
+        text = (msg.message or "").strip()
+        if text.startswith(LOGIN_REPLY_MARK) or is_bot_message(msg) or getattr(msg, "action", None):
+            return
+        item = db.get_item_by_msg(msg.chat_id, msg.id)
+        if item is None:
+            if text:
+                await self._handle_text(msg, text, edited=True)   # an edited label
+            return
+        if item["kind"] == "note":
+            fields = {"text": text}
+            if not item["custom_title"]:
+                fields["title"] = text[:120]
+            db.update_item(item["id"], **fields)
+            return
+        inline, rest = _inline_label(text)
+        if inline:
+            self._label(item["id"], inline)
+        url = _first_url(msg)
+        db.update_item(item["id"], text=(rest if inline else text) or None)
+        if url and url != item["url"]:
+            # A different link: its preview and AI description start over (a title the user typed stays).
+            db.update_item(item["id"], url=url, kind=classify_url(url), ai_title=0, original_title=None,
+                           ai_summary=None, ai_done_at=None, ai_status=None, ai_note=None)
+            asyncio.create_task(refresh_preview(item["id"]))
 
     async def process(self, msg):
         if msg is None or getattr(msg, "action", None):
@@ -258,10 +293,11 @@ class SyncEngine:
                 out["image_path"] = Path(path).name
         return {k: v for k, v in out.items() if v}
 
-    async def _handle_text(self, msg, text):
+    async def _handle_text(self, msg, text, edited=False):
         """A plain text message: a new collection's name asked for by the buttons, a collection label for a
-        shared item, or a stand-alone note."""
-        if self.picker.take_name(msg, text):
+        shared item, or a stand-alone note. `edited`: the message was a label and has just been corrected, so it
+        re-files its item and never becomes a note."""
+        if not edited and self.picker.take_name(msg, text):
             return
         m = SPEC_RE.match(text)
         spec = m.groups() if (m and len(text) <= 120 and "\n" not in text and not URL_RE.search(text)) else None
@@ -290,11 +326,13 @@ class SyncEngine:
             # 2. A label sent after the item. Assign when the item has no collection yet, or the label is
             #    explicit (names a subcategory) or names a collection that already exists.
             target = db.prev_item_before(msg.chat_id, msg.id)
-            if target and (target["collection_id"] is None or spec[1]
+            if target and (edited or target["collection_id"] is None or spec[1]
                            or (spec[0] and db.find_named(spec[0]))):
                 self._label(target["id"], spec)
                 return
 
+        if edited:
+            return
         # otherwise store it as a note
         db.create_item({
             "chat_id": msg.chat_id, "message_id": msg.id, "kind": "note",
