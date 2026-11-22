@@ -24,6 +24,6 @@ jobs:
       - name: Byte-compile
         run: python -m compileall -q box
       - name: Import check
-        run: python -c "import box.server, box.sync, box.backup, box.metadata, box.db"
+        run: python -c "import box.server, box.sync, box.backup, box.metadata, box.db, box.ai"
       - name: Smoke test — seed the demo database
         run: python -m box demo

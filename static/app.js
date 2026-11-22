@@ -25,6 +25,7 @@ const state = {
   fresh: new Set(),     // ids of saves that just arrived (highlighted)
   ownAdds: new Set(),   // ids saved from this page's Add dialog: no notification for those
   unseen: 0,            // new saves while the tab was hidden (shown in the title)
+  ai: null,             // AI titles pass: { state, done, total, pending, ready, detail, ... }
 };
 
 /* ---------- icons ---------- */
@@ -46,6 +47,7 @@ const I = {
   cloud: '<svg viewBox="0 0 24 24"><path d="M7 18.5a4 4 0 0 1-.6-8 5.5 5.5 0 0 1 10.6-1.3 4.6 4.6 0 0 1 .5 9.3z"/><path d="m9.5 13.5 2.5-2.5 2.5 2.5M12 11v5.5"/></svg>',
   search: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.4-4.4"/></svg>',
   key: '<svg viewBox="0 0 24 24"><circle cx="8" cy="15" r="3.5"/><path d="m10.5 12.5 8-8M16 7l2.5 2.5M14 9l2 2"/></svg>',
+  sparkle: '<svg viewBox="0 0 24 24"><path d="M11 4.5l1.7 4.8 4.8 1.7-4.8 1.7L11 17.5l-1.7-4.8L4.5 11l4.8-1.7z"/><path d="M18 14.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z"/></svg>',
   kind: {
     article: '<svg viewBox="0 0 24 24"><path d="M7 4.5h10a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1v-13a1 1 0 0 1 1-1z"/><path d="M9 8.5h6M9 12h6M9 15.5h4"/></svg>',
     video: '<svg viewBox="0 0 24 24"><path d="M8 5.8v12.4a.8.8 0 0 0 1.2.7l9.6-6.2a.8.8 0 0 0 0-1.4L9.2 5.1A.8.8 0 0 0 8 5.8z"/></svg>',
@@ -168,10 +170,21 @@ async function api(path, opts = {}) {
     showSignIn(had ? "Your sign-in is no longer valid. Send login again." : "");
     throw new Error("unauthorized");
   }
-  if (!r.ok) throw new Error(await r.text());
+  if (!r.ok) {
+    let detail = "";
+    try { detail = (await r.json()).detail; } catch (e) {}
+    const msg = typeof detail === "string" && detail ? detail : `Something went wrong (${r.status})`;
+    if (!opts.quiet) toast(msg, { ms: 5000 });
+    const err = new Error(msg);
+    err.status = r.status;
+    err.shown = !opts.quiet;
+    throw err;
+  }
   signedIn();
   return r.json();
 }
+// Errors are already shown as a toast by api(); keep them out of the console.
+window.addEventListener("unhandledrejection", (e) => { if (e.reason?.shown) e.preventDefault(); });
 
 // A Telegram sign-in link opens the page at #login=<code>: swap the code for the token once.
 async function redeemLoginLink() {
@@ -277,9 +290,10 @@ const current = () => (state.collectionId ? state.byId.get(state.collectionId) :
 
 /* ---------- loading ---------- */
 async function loadState() {
-  const s = await api("/api/state");
+  const s = await api("/api/state", { quiet: true });
   state.collections = s.collections;
   state.counts = s.counts;
+  updateAi(s.ai);
   indexCollections(s.collections);
   if (state.collectionId && !state.byId.has(state.collectionId)) state.collectionId = null;
   renderStatus(s.status, s.backup);
@@ -294,6 +308,41 @@ async function loadState() {
     state.latestId = latest;
     announceNewSaves(since);
   }
+}
+
+/* ---------- AI titles pass ---------- */
+let aiTimer = null;
+function updateAi(ai) {
+  const was = state.ai?.state;
+  state.ai = ai || null;
+  if (!ai) return;
+  if (was === "running" && ai.state !== "running") {
+    const parts = [];
+    if (ai.described) parts.push(`${plural(ai.described, "save")} described`);
+    if (ai.no_info) parts.push(`${ai.no_info} with too little to go on`);
+    if (ai.state === "error") toast(ai.detail || "AI titles stopped", { sub: parts.join(" · "), ms: 8000 });
+    else toast("AI titles done", { sub: parts.join(" · ") || "Nothing needed changing", ms: 6000 });
+    loadItems();
+  } else if (ai.state === "running" && ai.done > (state.aiShown || 0)) {
+    loadItems();   // show titles as they arrive
+  }
+  state.aiShown = ai.state === "running" ? ai.done : 0;
+  clearTimeout(aiTimer);
+  if (ai.state === "running") aiTimer = setTimeout(() => loadState().catch(() => {}), 2500);
+}
+
+async function runAi() {
+  const ai = state.ai;
+  if (ai?.state === "running") { toast(`Working… ${ai.done} of ${ai.total} done`); return; }
+  if (ai && !ai.ready) {
+    toast("AI titles aren't set up on the server yet", { sub: "On the server run: python -m box ai-key", ms: 7000 });
+    return;
+  }
+  if (ai && !ai.pending) { toast("Every link already has an AI title"); return; }
+  const s = await api("/api/ai/run", { method: "POST" });
+  updateAi(s);
+  renderHero();
+  toast(`Writing titles for ${plural(s.total || s.pending, "save")}…`);
 }
 
 /* ---------- new-save notifications ---------- */
@@ -443,10 +492,17 @@ function renderHero() {
     } else {
       tools.push(["sync", I.sync, "Refresh"]);
       tools.push(["menu", I.inbox, "Browse"]);
+      const ai = state.ai;
+      if (ai && (ai.pending || ai.state === "running")) {
+        tools.push(ai.state === "running"
+          ? ["ai", I.sparkle, `Titling ${ai.done}/${ai.total}`, "busy"]
+          : ["ai", I.sparkle, `AI titles <span class="count">${ai.pending}</span>`]);
+      }
     }
   }
+  // labels are fixed strings or numbers; the AI one carries a count badge
   $("#tools").innerHTML = tools.map(([act, icon, label, cls]) =>
-    `<button class="tool ${cls || ""}" data-act="${act}"><i>${icon}</i>${label}</button>`).join("");
+    `<button class="tool ${cls || ""}" data-act="${act}"><i>${icon}</i><span>${label}</span></button>`).join("");
 }
 
 $("#crumbs").addEventListener("click", (e) => {
@@ -470,6 +526,7 @@ $("#tools").addEventListener("click", async (e) => {
       go({ view: "all", collectionId: c.parent ? c.parent.id : null });
       break;
     case "sync": await refresh(); toast("Up to date"); break;
+    case "ai": await runAi(); break;
     case "menu": openDrawer(); break;
     case "all": go({ view: "all", collectionId: null }); break;
   }
@@ -572,7 +629,7 @@ function tile(it) {
     frame = `<div class="tile-frame"><div class="tile-text">` +
       `<div class="t-site">${it.url ? favicon(it.url) : I.kind[it.kind] || ""}${esc(site || KIND_LABEL[it.kind] || "")}</div>` +
       `<div class="t-title">${esc(title)}</div>` +
-      (it.description ? `<div class="t-body">${esc(it.description)}</div>` : "") +
+      ((it.summary || it.description) ? `<div class="t-body">${esc(it.summary || it.description)}</div>` : "") +
       `</div><div class="tile-actions"></div></div>`;
   }
   const showCap = img || it.kind !== "note";
@@ -638,9 +695,15 @@ function openItem(it) {
   const site = it.site_name || (it.url ? hostOf(it.url) : KIND_LABEL[it.kind]);
   $("#itemSrc").innerHTML = `${it.url ? favicon(it.url) : I.kind[it.kind] || ""}<span>${esc(site)}</span><span>·</span><span>${esc(when(it.date))}</span>`;
   $("#itemTitle").textContent = it.kind === "note" ? "Note" : (it.title || it.file_name || it.url || "");
+  $("#itemTitleRow").hidden = false;
+  $("#itemTitleForm").hidden = true;
+  $("#itemEditTitle").hidden = it.kind === "note" || it.trashed;
+  // The AI description replaces the site's own; before the AI pass, the site's description is all there is.
   $("#itemDesc").textContent = it.kind === "note" ? (it.text || it.title || "")
-    : (it.description || (it.text && it.text !== it.url ? it.text : "") || "");
+    : (it.summary || it.description || (it.text && it.text !== it.url ? it.text : "") || "");
   $("#itemDesc").classList.toggle("note-text", it.kind === "note");
+  renderItemAi(it);
+  openItem.current = it;
   const colBtn = $("#itemCol");
   colBtn.innerHTML = `${I.folder}${esc(it.collection_path || "Unsorted")}`;
   colBtn.onclick = () => {
@@ -669,6 +732,56 @@ function openItem(it) {
   dlg.showModal();
 }
 function closeItem() { if ($("#dlgItem").open) $("#dlgItem").close(); }
+
+function renderItemAi(it) {
+  const box = $("#itemAi");
+  box.innerHTML = "";
+  if (it.ai_title) {
+    box.innerHTML = `${I.sparkle}<span>Title by AI</span>` + (it.can_undo_title ? `<span>·</span><button type="button">Undo</button>` : "");
+    box.querySelector("button")?.addEventListener("click", async () => {
+      const saved = await api(`/api/items/${it.id}/undo-title`, { method: "POST" });
+      itemChanged(saved);
+      toast("Title restored");
+    });
+  } else if (it.ai_status === "no_info") {
+    box.innerHTML = `${I.sparkle}<span>${esc(it.ai_note || "Not enough information to describe this link.")}</span>`;
+  }
+}
+
+// Replace a save in the list and in the open detail sheet after the server changed it.
+function itemChanged(saved) {
+  const i = state.items.findIndex((x) => x.id === saved.id);
+  if (i >= 0) state.items[i] = saved;
+  if ($("#dlgItem").open && openItem.current?.id === saved.id) openItem(saved);
+  renderBoard();
+}
+
+$("#itemEditTitle").addEventListener("click", () => {
+  const it = openItem.current;
+  if (!it) return;
+  $("#itemTitleInput").value = it.title || "";
+  $("#itemTitleRow").hidden = true;
+  $("#itemTitleForm").hidden = false;
+  $("#itemTitleInput").focus();
+  $("#itemTitleInput").select();
+});
+$("#itemTitleCancel").addEventListener("click", () => {
+  $("#itemTitleForm").hidden = true;
+  $("#itemTitleRow").hidden = false;
+});
+$("#itemTitleForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const it = openItem.current;
+  const title = $("#itemTitleInput").value.trim();
+  if (!it || !title) return;
+  const saved = await api(`/api/items/${it.id}`, jsonBody("PATCH", { title }));
+  itemChanged(saved);
+  toast("Title saved");
+});
+// Escape inside the title box cancels the edit instead of closing the sheet.
+$("#itemTitleInput").addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); $("#itemTitleCancel").click(); }
+});
 
 /* ---------- dialogs ---------- */
 function fillCollectionSelect(sel, emptyLabel, selected) {

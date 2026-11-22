@@ -62,9 +62,22 @@ def init_db():
     with _lock:
         conn().executescript(SCHEMA)
         cols = {r[1] for r in conn().execute("PRAGMA table_info(items)")}
-        if "custom_title" not in cols:   # databases created before titles could be set from a label
-            conn().execute("ALTER TABLE items ADD COLUMN custom_title INTEGER DEFAULT 0")
+        for col, decl in ADDED_COLUMNS:   # databases created before these columns existed
+            if col not in cols:
+                conn().execute(f"ALTER TABLE items ADD COLUMN {col} {decl}")
         conn().commit()
+
+
+# Columns added after the first release, with their declarations.
+ADDED_COLUMNS = [
+    ("custom_title", "INTEGER DEFAULT 0"),   # 1 = the user set this title; never replaced automatically
+    ("ai_summary", "TEXT"),                  # short description written by the AI pass
+    ("ai_title", "INTEGER DEFAULT 0"),       # 1 = the current title came from the AI pass
+    ("original_title", "TEXT"),              # title before the AI pass replaced it (for undo)
+    ("ai_done_at", "TEXT"),                  # when the AI pass handled this item; NULL = not yet
+    ("ai_status", "TEXT"),                   # done | no_info | error
+    ("ai_note", "TEXT"),                     # why the AI pass could not describe it
+]
 
 
 def q(sql, params=()):
@@ -172,7 +185,8 @@ def delete_collection(cid):
 
 ITEM_FIELDS = {"chat_id", "message_id", "kind", "url", "title", "custom_title", "description", "site_name",
                "image_url", "image_path", "text", "file_path", "file_name", "mime",
-               "collection_id", "trashed", "tg_date"}
+               "collection_id", "trashed", "tg_date",
+               "ai_summary", "ai_title", "original_title", "ai_done_at", "ai_status", "ai_note"}
 
 
 def create_item(fields):
@@ -223,6 +237,18 @@ def counts():
     return {"all": row["all_n"] or 0, "unsorted": row["unsorted_n"] or 0, "trash": row["trash_n"] or 0}
 
 
+AI_PENDING_SQL = "trashed=0 AND url IS NOT NULL AND ai_done_at IS NULL"
+
+
+def ai_pending_count():
+    """Saved links the AI pass has never handled."""
+    return q(f"SELECT COUNT(*) AS n FROM items WHERE {AI_PENDING_SQL}").fetchone()["n"]
+
+
+def ai_pending_items():
+    return [dict(r) for r in q(f"SELECT * FROM items WHERE {AI_PENDING_SQL} ORDER BY id").fetchall()]
+
+
 def list_items(view="all", collection_id=None, kind=None, search=None):
     sql = "SELECT * FROM items WHERE trashed=?"
     params = [1 if view == "trash" else 0]
@@ -237,8 +263,9 @@ def list_items(view="all", collection_id=None, kind=None, search=None):
         params.append(kind)
     if search:
         like = f"%{search}%"
-        sql += " AND (title LIKE ? OR text LIKE ? OR url LIKE ? OR site_name LIKE ? OR description LIKE ?)"
-        params.extend([like] * 5)
+        sql += (" AND (title LIKE ? OR text LIKE ? OR url LIKE ? OR site_name LIKE ? OR description LIKE ?"
+                " OR ai_summary LIKE ?)")
+        params.extend([like] * 6)
     sql += " ORDER BY COALESCE(tg_date, created_at) DESC, id DESC"
     return [dict(r) for r in q(sql, params).fetchall()]
 

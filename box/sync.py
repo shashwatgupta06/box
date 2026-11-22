@@ -3,7 +3,7 @@
 Message convention:
   1. Share anything (link / post / photo / file) into the Box chat.
   2. Name the destination: "Career.Computer Vision." or "To-Buy // Kitchen" (collection, then an optional
-     subcategory; both are created if missing; "(Title)" at the end names the card). The label may be
+     subcategory; both are created if missing). Titles are edited in the web UI, not in labels. The label may be
      - in the same message as the link or photo (a line of its own, or text around the link),
      - a comment typed in the share sheet, which Telegram sends just BEFORE the shared item, or
      - the next message after the item.
@@ -27,10 +27,8 @@ from .picker import Picker, is_bot_message
 log = logging.getLogger("box.sync")
 
 URL_RE = re.compile(r"https?://\S+")
-# "Collection", "Collection.Sub", "Collection // Sub", each optionally ending in "." and optionally followed by a
-# title in parentheses: "Career.New.(Kitchen appliance)". A title alone, "(Kitchen appliance)", also works.
-SPEC_RE = re.compile(r"^\s*(?:([^./\n()]{1,48}?)\s*(?:(?://+|\.)\s*([^./\n()]{1,48}?)\s*)?\.?)?\s*"
-                     r"(?:\(\s*([^()\n]{1,150}?)\s*\)\s*\.?)?\s*$")
+# "Collection", "Collection.Sub" or "Collection // Sub", each optionally ending in ".".
+SPEC_RE = re.compile(r"^\s*([^./\n()]{1,48}?)\s*(?:(?://+|\.)\s*([^./\n()]{1,48}?)\s*)?\.?\s*$")
 # A share-sheet comment reaches the chat in the same second as its item, just before it; a label typed after an
 # item comes later. So a label is attached to the FOLLOWING item only when that item arrives this close after it;
 # otherwise it belongs to the item before it.
@@ -50,7 +48,7 @@ class SyncEngine:
         self.chat = None
         self.chat_key = None
         self.status = {"state": "starting", "detail": "", "last_sync": None}
-        self.pending_labels = {}   # message id of a shared item -> (collection, subcategory, title) sent just before it
+        self.pending_labels = {}   # message id of a shared item -> (collection, subcategory) sent just before it
         self.picker = Picker(cfg)
 
     async def run(self):
@@ -266,8 +264,7 @@ class SyncEngine:
         if self.picker.take_name(msg, text):
             return
         m = SPEC_RE.match(text)
-        spec = m.groups() if (m and (m.group(1) or m.group(3)) and len(text) <= 220 and "\n" not in text
-                              and not URL_RE.search(text)) else None
+        spec = m.groups() if (m and len(text) <= 120 and "\n" not in text and not URL_RE.search(text)) else None
         reply_id = getattr(getattr(msg, "reply_to", None), "reply_to_msg_id", None)
 
         if spec and reply_id:
@@ -291,9 +288,9 @@ class SyncEngine:
                     self.pending_labels[nxt.id] = spec
                 return
             # 2. A label sent after the item. Assign when the item has no collection yet, or the label is
-            #    explicit (names a subcategory or a title) or names a collection that already exists.
+            #    explicit (names a subcategory) or names a collection that already exists.
             target = db.prev_item_before(msg.chat_id, msg.id)
-            if target and (target["collection_id"] is None or spec[1] or spec[2]
+            if target and (target["collection_id"] is None or spec[1]
                            or (spec[0] and db.find_named(spec[0]))):
                 self._label(target["id"], spec)
                 return
@@ -350,9 +347,9 @@ class SyncEngine:
 def _inline_label(text):
     """A label written in the same message as a link or photo -> (spec, text without it), else (None, text).
 
-    Only lines that look like a label count: the dotted or // form, or a (title) — e.g. "Career.AI." or
-    "To-Buy // Kitchen (Blender)". Plain words never do, so an article title shared along with its link is not
-    mistaken for a collection, and a lone "Name." counts only if that collection exists."""
+    Only lines that look like a label count: the dotted or // form, e.g. "Career.AI." or "To-Buy // Kitchen".
+    Plain words never do, so an article title shared along with its link is not mistaken for a collection, and a
+    lone "Name." counts only if that collection exists."""
     if not text:
         return None, text
     lines = (text or "").splitlines()
@@ -361,8 +358,8 @@ def _inline_label(text):
         if not bare or len(bare) > 120:
             continue
         m = SPEC_RE.match(bare)
-        if m and (m.group(1) or m.group(3)) and ("." in bare or "//" in bare or "(" in bare):
-            if not m.group(2) and not m.group(3) and not db.find_named(m.group(1)):
+        if m and ("." in bare or "//" in bare):
+            if not m.group(2) and not db.find_named(m.group(1)):
                 continue    # "Great read." next to a link: only an existing collection's name counts alone
             rest_line = line.replace(bare, "", 1).strip() if bare in line else URL_RE.findall(line) and " ".join(URL_RE.findall(line))
             rest = lines[:i] + ([rest_line] if rest_line else []) + lines[i + 1:]
@@ -371,15 +368,9 @@ def _inline_label(text):
 
 
 def _apply_label(item_id, spec):
-    """spec = (collection, subcategory, title); any part may be None."""
-    col, sub, title = spec
-    fields = {}
-    if col:
-        fields["collection_id"] = db.resolve_spec(col, sub)
-    if title:
-        fields["title"] = title
-        fields["custom_title"] = 1
-    db.update_item(item_id, **fields)
+    """spec = (collection, subcategory); the subcategory may be None."""
+    col, sub = spec
+    db.update_item(item_id, collection_id=db.resolve_spec(col, sub))
 
 
 def _first_url(msg):

@@ -8,6 +8,7 @@
   "cors_origins": [],
   "ui_url": "",
   "bot_token": "",
+  "anthropic_api_key": "",
   "backup": {
     "enabled": true,
     "remote": "gdrive",

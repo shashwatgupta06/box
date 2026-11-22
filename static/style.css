@@ -449,6 +449,28 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .item-body { padding: 28px 26px 24px; display: flex; flex-direction: column; min-width: 0; overflow-y: auto; max-height: calc(100vh - 48px); }
 .item-src { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; padding-right: 36px; }
 .item-body h2 { font-size: 21px; line-height: 1.3; margin: 10px 0 0; overflow-wrap: anywhere; }
+.item-title-row[hidden], .item-title-edit[hidden], .icon-sm[hidden] { display: none; }
+.item-title-row { display: flex; align-items: flex-start; gap: 6px; margin-top: 10px; padding-right: 4px; }
+.item-title-row h2 { margin: 0 !important; flex: 1; min-width: 0; }
+.icon-sm { width: 30px; height: 30px; flex: none; border-radius: var(--r-pill); display: grid; place-items: center;
+           color: var(--muted); margin-top: -2px; }
+.icon-sm:hover { background: var(--surface-2); color: var(--ink); }
+.icon-sm svg { width: 16px; height: 16px; }
+.item-title-edit { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.item-title-edit input {
+  flex: 1 1 140px; min-width: 0; height: 38px; padding: 0 12px; border-radius: var(--r-md); outline: 0;
+  border: 1px solid var(--line-strong); background: var(--page); color: var(--ink); font-size: 15px;
+}
+.item-title-edit input:focus { border-color: var(--ink-soft); }
+.item-ai { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 6px; color: var(--muted);
+           font-size: 12.5px; }
+.item-ai:empty { display: none; }
+.item-ai svg { width: 13px; height: 13px; }
+.item-ai button { color: var(--ink-soft); font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
+.item-ai button:hover { color: var(--ink); }
+.tool .count { font-size: 11px; font-weight: 600; color: var(--muted); }
+.tool.busy i { animation: pulse 1.4s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .45; } }
 .item-desc { color: var(--ink-soft); margin-top: 10px; line-height: 1.55; overflow-wrap: anywhere; white-space: pre-line;
              display: -webkit-box; -webkit-line-clamp: 9; -webkit-box-orient: vertical; overflow: hidden; }
 .item-desc:empty { display: none; }

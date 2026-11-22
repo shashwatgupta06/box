@@ -26,9 +26,7 @@ backups are connected.</sub>
    That's `Collection.Subcategory` (the subcategory is optional; `To-Buy // Kitchen` works too).
    Collections and subcategories are created automatically if they don't exist yet. Put the label
    **in the same message** as the link, as the **comment** in Telegram's share sheet, or as the
-   **next message** after the link. Add a title in parentheses to name the card yourself —
-   `Career.New.(Kitchen appliance)` — or send just `(Kitchen appliance)` to set the title only.
-   You can also **reply** to any earlier shared message with a label.
+   **next message** after the link. You can also **reply** to any earlier shared message with a label.
    A single name finds an existing subcategory too: `Robotics.` files into `Career / Robotics` when
    that is the only collection called Robotics.
 3. Or just tap: with the optional bot set up (below), Box replies to every new share with one
@@ -37,6 +35,22 @@ backups are connected.</sub>
    **↩ Change** on the reply lets you re-file it later.
 4. If you don't label or tap anything, the item lands in **Unsorted** and
    you can move it from the web UI later.
+5. Rename any save from its detail view in the web UI (the pencil next to the title).
+
+### AI titles and descriptions (optional, Claude API)
+
+The **AI titles** button in the web UI gives every saved link a short title that says what it is, and a 3–4
+sentence description shown when you open the save. Each press handles only links it has never handled before.
+Box reads what it can in text — the site's title and description, the text you sent with the link, the page's
+own text, a YouTube video's description and tags, an Instagram post's caption — and sends that to Claude
+(`claude-sonnet-5-5`). Videos are described from that text only. A title you typed yourself is kept; an AI title
+can be undone from the detail view.
+
+1. Get a Claude API key at [platform.claude.com](https://platform.claude.com) (API keys).
+2. On the Box server: `.venv/bin/python -m box ai-key` and paste it (input is hidden; it is checked, then
+   saved to `config.json` only). No restart needed.
+
+Each link costs well under a cent. The link and the text gathered for it are sent to Anthropic's API.
 
 ### Category buttons (optional bot)
 
@@ -56,7 +70,7 @@ source, cover image) for everything you save.
 
 Everything stays on your machine: a SQLite database plus downloaded media in
 `data/`. No accounts, no server, nothing leaves your computer except the
-optional backup to your own Google Drive.
+optional backup to your own Google Drive and, if you turn them on, the optional AI titles.
 
 ## Setup
 
@@ -183,10 +197,12 @@ again (the Telegram session is intentionally never uploaded) and start Box.
 
 ```
 box/
-  __main__.py    CLI entry point — run | login | demo | backup | token
+  __main__.py    CLI entry point — run | login | bot | ai-key | demo | backup | token
   server.py      FastAPI app and JSON API
   sync.py        Telegram client: history catch-up + live updates
+  picker.py      optional Telegram bot that posts category buttons
   metadata.py    link previews (title, source, cover image)
+  ai.py          AI titles and descriptions (Claude API)
   db.py          SQLite schema and queries
   backup.py      daily snapshot + rclone upload
   login.py       one-time Telegram sign-in
@@ -200,8 +216,8 @@ data/            local state: database, media, backups (never committed)
 ## Notes
 
 - `config.json` options: `chat` (chat title or `"me"`), `host` and `port`,
-  `max_file_mb` (largest shared file to download), `access_token`, `cors_origins`, `ui_url`, and
-  the `backup` block.
+  `max_file_mb` (largest shared file to download), `access_token`, `cors_origins`, `ui_url`,
+  `bot_token`, `anthropic_api_key`, and the `backup` block.
   It's gitignored — `config.example.json` is the template.
 - Trash keeps items until you delete them permanently from the Trash view.
 - Never share `data/box_session.session` — it grants access to your Telegram

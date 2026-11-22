@@ -22,6 +22,14 @@ log = logging.getLogger("box.metadata")
 
 UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
+# Instagram serves a server only an empty app shell, but gives Meta's own link-preview fetcher the post's
+# caption and picture in Open Graph tags (checked from the VM, 2026).
+META_PREVIEW_UA = "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)"
+META_HOSTS = ("instagram.com",)
+
+
+def user_agent_for(url):
+    return META_PREVIEW_UA if _matches(_host(url), META_HOSTS) else UA
 
 VIDEO_HOSTS = ("youtube.com", "youtu.be", "vimeo.com", "tiktok.com",
                "twitch.tv", "dailymotion.com", "fb.watch")
@@ -133,7 +141,7 @@ async def fetch_metadata(url):
     out = {"site_name": site_name_for(url)}
     timeout = aiohttp.ClientTimeout(total=15)
     try:
-        async with aiohttp.ClientSession(headers={"User-Agent": UA}, timeout=timeout) as s:
+        async with aiohttp.ClientSession(headers={"User-Agent": user_agent_for(url)}, timeout=timeout) as s:
             try:
                 emb = await _oembed(s, url, host)
             except Exception as e:

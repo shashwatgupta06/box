@@ -15,9 +15,11 @@ from .config import ROOT, MEDIA_DIR, load_config, ensure_dirs, telegram_configur
 from .metadata import classify_url, enrich_item
 from .sync import SyncEngine
 from .backup import BackupEngine
+from .ai import AiPass
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
+ai_pass = AiPass()
 engine: SyncEngine | None = None
 backup_engine: BackupEngine | None = None
 _sync_task = None
@@ -108,6 +110,11 @@ def _serialize(item):
         "collection_path": db.collection_path(item["collection_id"]) if item["collection_id"] else None,
         "date": item["tg_date"] or item["created_at"],
         "trashed": bool(item["trashed"]),
+        "summary": item["ai_summary"],
+        "ai_title": bool(item["ai_title"]),
+        "can_undo_title": bool(item["ai_title"]) and item["original_title"] is not None,
+        "ai_status": item["ai_status"],
+        "ai_note": item["ai_note"],
     }
 
 
@@ -155,9 +162,18 @@ def state():
                             "(add api_id/api_hash to config.json, then run: python -m box login)"}
     backup = backup_engine.status if backup_engine else {"state": "idle", "detail": ""}
     buttons = engine.picker.status if engine else {"state": "off", "detail": ""}
-    return {"status": status, "backup": backup, "buttons": buttons,
+    return {"status": status, "backup": backup, "buttons": buttons, "ai": ai_pass.public_status(),
             "collections": db.collections_tree(), "counts": db.counts(),
             "latest": db.latest_item_id()}
+
+
+@app.post("/api/ai/run")
+async def ai_run():   # async: the pass is started as a task on the server's event loop
+    """Start the AI title + description pass over links it has never handled."""
+    if not ai_pass.key():
+        raise HTTPException(409, "No Claude API key on the server yet. On the server run: python -m box ai-key")
+    ai_pass.start()
+    return ai_pass.public_status()
 
 
 @app.get("/api/items")
@@ -188,6 +204,7 @@ class ItemPatch(BaseModel):
     collection_id: int | None = None
     set_collection: bool = False   # distinguishes "move to Unsorted" from "no change"
     trashed: bool | None = None
+    title: str | None = None       # a title typed in the app; kept from then on
 
 
 @app.patch("/api/items/{item_id}")
@@ -198,6 +215,23 @@ def patch_item(item_id: int, body: ItemPatch):
         db.update_item(item_id, collection_id=body.collection_id)
     if body.trashed is not None:
         db.update_item(item_id, trashed=1 if body.trashed else 0)
+    if body.title is not None:
+        title = " ".join(body.title.split())[:200]
+        if not title:
+            raise HTTPException(400, "The title can't be empty.")
+        db.update_item(item_id, title=title, custom_title=1, ai_title=0)
+    return _serialize(db.get_item(item_id))
+
+
+@app.post("/api/items/{item_id}/undo-title")
+def undo_ai_title(item_id: int):
+    """Put back the title an item had before the AI pass renamed it."""
+    item = db.get_item(item_id)
+    if not item:
+        raise HTTPException(404)
+    if not (item["ai_title"] and item["original_title"] is not None):
+        raise HTTPException(409, "This title was not set by the AI.")
+    db.update_item(item_id, title=item["original_title"], ai_title=0)
     return _serialize(db.get_item(item_id))
 
 

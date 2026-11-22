@@ -16,7 +16,8 @@ DEFAULTS = {
     "access_token": "",     # when set, /api and /media require it (needed once Box is reachable remotely)
     "cors_origins": [],     # web origins allowed to call the API, e.g. ["https://<user>.github.io"]
     "bot_token": "",        # Telegram bot that posts category buttons (python -m box bot); empty = no buttons
-    "ui_url": "",           # web UI address used in Telegram sign-in links, e.g. "https://<user>.github.io/box/"
+    "anthropic_api_key": "",  # Claude API key for AI titles and descriptions (python -m box ai-key)
+    "ui_url": "",          # web UI address used in Telegram sign-in links, e.g. "https://<user>.github.io/box/"
 }
 
 

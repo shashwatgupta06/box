@@ -91,7 +91,18 @@
   <div class="item-media" id="itemMedia"></div>
   <div class="item-body">
     <div class="item-src" id="itemSrc"></div>
-    <h2 id="itemTitle"></h2>
+    <div class="item-title-row" id="itemTitleRow">
+      <h2 id="itemTitle"></h2>
+      <button class="icon-sm" id="itemEditTitle" title="Edit title" aria-label="Edit title">
+        <svg viewBox="0 0 24 24"><path d="m14.5 5.5 4 4L8 20H4v-4z"/><path d="m12.5 7.5 4 4"/></svg>
+      </button>
+    </div>
+    <form class="item-title-edit" id="itemTitleForm" hidden>
+      <input type="text" id="itemTitleInput" maxlength="200" required aria-label="Title" autocomplete="off">
+      <button type="submit" class="btn primary">Save</button>
+      <button type="button" class="btn ghost" id="itemTitleCancel">Cancel</button>
+    </form>
+    <div class="item-ai" id="itemAi"></div>
     <p class="item-desc" id="itemDesc"></p>
     <button class="item-col" id="itemCol"></button>
     <div class="item-actions" id="itemActions"></div>
